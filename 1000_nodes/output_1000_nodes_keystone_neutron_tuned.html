@@ -1,0 +1,871 @@
+<!doctype html>
+<html ng-app="App">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="generator" content="Rally version 0.5.1~dev92">
+  <title>Rally | Rally Task Report</title>
+  
+  
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/nvd3/1.1.15-beta/nv.d3.min.css">
+  <script type="text/javascript" src="https://ajax.googleapis.com/ajax/libs/angularjs/1.3.3/angular.min.js"></script>
+  <script type="text/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/d3/3.4.13/d3.min.js"></script>
+  <script type="text/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/nvd3/1.1.15-beta/nv.d3.min.js"></script>
+  
+
+  <script type="text/javascript">
+    "use strict";
+    var widgetDirective = function($compile) {
+  var Chart = {
+    _render: function(node, data, chart, do_after){
+      nv.addGraph(function() {
+        d3.select(node)
+          .datum(data).transition().duration(0)
+          .call(chart);
+        if (typeof do_after === "function") {
+          do_after(node, chart)
+        }
+        nv.utils.windowResize(chart.update);
+      })
+    },
+    /* NOTE(amaretskiy): this is actually a result of
+       d3.scale.category20().range(), excluding red color (#d62728)
+       which is reserved for errors */
+    _colors: ["#1f77b4", "#aec7e8", "#ff7f0e", "#ffbb78", "#2ca02c",
+              "#98df8a", "#ff9896", "#9467bd", "#c5b0d5", "#8c564b",
+              "#c49c94", "#e377c2", "#f7b6d2", "#7f7f7f", "#c7c7c7",
+              "#bcbd22", "#dbdb8d", "#17becf", "#9edae5"],
+    _widgets: {
+      Pie: "pie",
+      StackedArea: "stack",
+      Lines: "lines",
+      Histogram: "histogram"
+    },
+    get_chart: function(widget) {
+      if (widget in this._widgets) {
+        var name = this._widgets[widget];
+        return Chart[name]
+      }
+      return function() { console.log("Error: unexpected widget:", widget) }
+    },
+    pie: function(node, data, opts, do_after) {
+      var chart = nv.models.pieChart()
+        .x(function(d) { return d.key })
+        .y(function(d) { return d.values })
+        .showLabels(true)
+        .labelType("percent")
+        .donut(true)
+        .donutRatio(0.25)
+        .donutLabelsOutside(true)
+        .color(function(d){
+          if (d.data && d.data.color) { return d.data.color }
+        });
+
+      var data_ = [], colors = [], colors_map = {errors: "#d62728"};
+      for (var i in data) {
+        var key = data[i][0];
+        if (! (key in colors_map)) {
+          if (! colors.length) { colors = Chart._colors.slice() }
+          colors_map[key] = colors.shift()
+        }
+        data_.push({key:key, values:data[i][1], color:colors_map[key]})
+      }
+      Chart._render(node, data_, chart)
+    },
+    stack: function(node, data, opts, do_after) {
+      var chart = nv.models.stackedAreaChart()
+        .x(function(d) { return d[0] })
+        .y(function(d) { return d[1] })
+        .useInteractiveGuideline(opts.guide)
+        .showControls(opts.controls)
+        .clipEdge(true);
+      chart.xAxis
+        .tickFormat(d3.format(opts.xformat || "d"))
+        .axisLabel(opts.xname || "")
+        .showMaxMin(false);
+      chart.yAxis
+        .orient("left")
+        .tickFormat(d3.format(opts.yformat || ",.3f"));
+      var data_ = [];
+      for (var i in data) {
+        var d = {key:data[i][0], values:data[i][1]};
+        if (d.key === "failed_duration") {
+          d.color = "#d62728"
+        }
+        data_.push(d);
+      }
+      Chart._render(node, data_, chart, do_after);
+    },
+    lines: function(node, data, opts, do_after) {
+      var chart = nv.models.lineChart()
+        .x(function(d) { return d[0] })
+        .y(function(d) { return d[1] })
+        .useInteractiveGuideline(opts.guide)
+        .clipEdge(true);
+      chart.xAxis
+        .tickFormat(d3.format(opts.xformat || "d"))
+        .axisLabel(opts.xname || "")
+        .showMaxMin(false);
+      chart.yAxis
+        .orient("left")
+        .tickFormat(d3.format(opts.yformat || ",.3f"));
+      var data_ = [];
+      for (var i in data) {
+        var d = {key:data[i][0], values:data[i][1]};
+        if (d.key === "failed_duration") {
+          d.color = "#d62728"
+        }
+        data_.push(d)
+      }
+      Chart._render(node, data_, chart, do_after)
+    },
+    histogram: function(node, data, opts) {
+      var chart = nv.models.multiBarChart()
+        .reduceXTicks(true)
+        .showControls(false)
+        .transitionDuration(0)
+        .groupSpacing(0.05);
+      chart
+        .legend.radioButtonMode(true);
+      chart.xAxis
+        .axisLabel("Duration (seconds)")
+        .tickFormat(d3.format(",.2f"));
+      chart.yAxis
+        .axisLabel("Iterations (frequency)")
+        .tickFormat(d3.format("d"));
+      Chart._render(node, data, chart)
+    }
+  };
+
+  return {
+    restrict: "A",
+    scope: { data: "=" },
+    link: function(scope, element, attrs) {
+      scope.$watch("data", function(data) {
+        if (! data) { return console.log("Chart has no data to render!") }
+        if (attrs.widget === "Table") {
+          var ng_class = attrs.lastrowClass ? " ng-class='{"+attrs.lastrowClass+":$last}'" : "";
+          var template = "<table class='striped'><thead>" +
+            "<tr><th ng-repeat='i in data.cols track by $index'>{{i}}<tr>" +
+            "</thead><tbody>" +
+            "<tr" + ng_class + " ng-repeat='row in data.rows track by $index'>" +
+            "<td ng-repeat='i in row track by $index'>{{i}}" +
+            "<tr>" +
+            "</tbody></table>";
+          var el = element.empty().append($compile(template)(scope)).children()[0]
+        } else {
+
+          var el_chart = element.addClass("chart").css({display:"block"});
+          var el = el_chart.html("<svg></svg>").children()[0];
+
+          var do_after = null;
+
+          if (attrs.widget in {StackedArea:0, Lines:0}) {
+
+            /* Hide widget if not enough data */
+            if ((! data.length) || (data[0].length < 1) || (data[0][1].length < 2)) {
+              return element.empty().css({display:"none"})
+            }
+
+            /* NOTE(amaretskiy): Dirty fix for changing chart width in case
+               if there are too long Y values that overlaps chart box. */
+            var do_after = function(node, chart){
+              var g_box = angular.element(el_chart[0].querySelector(".nv-y.nv-axis"));
+
+              if (g_box && g_box[0] && g_box[0].getBBox) {
+
+                try {
+                  // 30 is padding aroung graphs
+                  var width = g_box[0].getBBox().width + 30;
+                } catch (err) {
+                  // This happens sometimes, just skip silently
+                  return
+                }
+
+                // 890 is chart width (set by CSS)
+                if (typeof width === "number" && width > 890) {
+                  width = (890 * 2) - width;
+                  if (width > 0) {
+                    angular.element(node).css({width:width+"px"});
+                    chart.update()
+                  }
+                }
+              }
+            }
+          }
+          else if (attrs.widget === "Pie") {
+            if (! data.length) {
+              return element.empty().css({display:"none"})
+            }
+          }
+
+          var options = {
+            xname: attrs.nameX || "",
+            xformat: attrs.formatX || "d",
+            yformat: attrs.formatY || ",.3f",
+            controls: attrs.controls === "true",
+            guide: attrs.guide === "true"
+          };
+          Chart.get_chart(attrs.widget)(el, data, options, do_after);
+        }
+
+        if (attrs.nameY) {
+          /* NOTE(amaretskiy): Dirty fix for displaying Y-axis label correctly.
+             I believe sometimes NVD3 will allow doing this in normal way */
+          var label_y = angular.element("<div>").addClass("chart-label-y").text(attrs.nameY);
+          angular.element(el).parent().prepend(label_y)
+        }
+
+        if (attrs.description) {
+          var desc_el = angular.element("<div>").addClass(attrs.descriptionClass || "h3").text(attrs.description);
+          angular.element(el).parent().prepend(desc_el)
+        }
+
+        if (attrs.title) {
+          var title_el = angular.element("<div>").addClass(attrs.titleClass || "h2").text(attrs.title);
+          angular.element(el).parent().prepend(title_el)
+        }
+
+        angular.element(el).parent().append(angular.element("<div style='clear:both'>"))
+      });
+    }
+  }
+};
+
+    var controllerFunction = function($scope, $location) {
+        $scope.source = "{\n  \"NovaServers.boot_and_list_server\": [\n    {\n      \"args\": {\n        \"detailed\": true, \n        \"flavor\": {\n          \"name\": \"m1.tiny\"\n        }, \n        \"image\": {\n          \"name\": \"cirros.uec\"\n        }\n      }, \n      \"context\": {\n        \"quotas\": {\n          \"neutron\": {\n            \"network\": -1, \n            \"port\": -1, \n            \"subnet\": -1\n          }, \n          \"nova\": {\n            \"cores\": -1, \n            \"floating_ips\": -1, \n            \"instances\": -1, \n            \"ram\": -1, \n            \"security_group_rules\": -1, \n            \"security_groups\": -1\n          }\n        }, \n        \"users\": {\n          \"project_domain\": \"default\", \n          \"resource_management_workers\": 30, \n          \"tenants\": 20, \n          \"user_choice_method\": \"random\", \n          \"user_domain\": \"default\", \n          \"users_per_tenant\": 2\n        }\n      }, \n      \"runner\": {\n        \"concurrency\": 50, \n        \"times\": 2000, \n        \"type\": \"constant\"\n      }, \n      \"sla\": {\n        \"failure_rate\": {\n          \"max\": 0\n        }\n      }\n    }\n  ]\n}";
+        $scope.scenarios = [{"load_profile": [["parallel iterations", [[0.0, 0], [7.6691852009296415, 49.607305637429405], [15.338370401859283, 49.991884606618804], [23.007555602788926, 49.99220462508088], [30.676740803718566, 49.987416161537894], [38.345926004648206, 49.99797931999071], [46.01511120557785, 49.98167183947024], [53.68429640650749, 49.97923284117599], [61.35348160743713, 49.992682259008504], [69.02266680836678, 49.98470660557167], [76.69185200929641, 49.98020029547356], [84.36103721022606, 49.99488831594507], [92.0302224111557, 49.99435441298534], [99.69940761208534, 49.99438117963541], [107.36859281301498, 50], [115.03777801394462, 49.990927318052435], [122.70696321487426, 50], [130.3761484158039, 50], [138.04533361673356, 49.996601754604], [145.7145188176632, 49.99607273243876], [153.38370401859282, 49.99406653937364], [161.05288921952248, 50], [168.72207442045212, 49.99626843053656], [176.39125962138175, 49.98843736675066], [184.0604448223114, 50], [191.72963002324104, 49.98950523484585], [199.39881522417068, 49.978788657788954], [207.0680004251003, 49.99705877727844], [214.73718562602997, 49.9923767585785], [222.4063708269596, 49.99025905334867], [230.07555602788923, 49.99098259227291], [237.7447412288189, 49.98528378283676], [245.41392642974853, 49.993380772203], [253.08311163067816, 49.9903084830509], [260.7522968316078, 50], [268.4214820325374, 49.98979711879186], [276.0906672334671, 50], [283.75985243439675, 50], [291.4290376353264, 50], [299.098222836256, 50], [306.76740803718565, 49.978571415802065], [314.4365932381153, 50], [322.10577843904497, 50], [329.7749636399746, 50], [337.44414884090423, 49.987218846871215], [345.11333404183387, 49.998227960719255], [352.7825192427635, 49.99091500725867], [360.45170444369313, 49.98181512343094], [368.1208896446228, 49.98050893577783], [375.79007484555245, 49.986515670497255], [383.4592600464821, 49.995584932779906], [391.1284452474117, 49.989372396407106], [398.79763044834135, 49.998064065505346], [406.466815649271, 49.99496814957733], [414.1360008502006, 49.97582197410757], [421.8051860511303, 49.983806269970415], [429.47437125205994, 49.99634226421126], [437.14355645298957, 49.99654483272677], [444.8127416539192, 49.99331281413441], [452.48192685484884, 49.99284926300873], [460.15111205577847, 49.99827310029638], [467.82029725670816, 50], [475.4894824576378, 50], [483.1586676585674, 49.99192791201201], [490.82785285949706, 50], [498.4970380604267, 50], [506.1662232613563, 50], [513.835408462286, 50], [521.5045936632156, 50], [529.1737788641452, 49.99333696940399], [536.8429640650749, 49.994732068345456], [544.5121492660046, 49.994486536403265], [552.1813344669342, 49.98517155565117], [559.8505196678639, 49.9948018295101], [567.5197048687935, 49.99832669577224], [575.1888900697231, 49.99250086132771], [582.8580752706528, 49.98821428024553], [590.5272604715824, 49.98697129421787], [598.196445672512, 49.99058034641312], [605.8656308734417, 49.988596598785115], [613.5348160743713, 49.996735245887855], [621.2040012753009, 50], [628.8731864762306, 50], [636.5423716771602, 49.991892347496695], [644.2115568780899, 49.987345374473875], [651.8807420790196, 49.997942138906524], [659.5499272799492, 49.985744380615415], [667.2191124808788, 49.61209051483195], [674.8882976818085, 48.92231890628972], [682.5574828827381, 47.103645458056924], [690.2266680836677, 46.094729774014546], [697.8958532845974, 39.46284159821685], [705.565038485527, 34.32799019749566], [713.2342236864566, 33.57507484947452], [720.9034088873863, 32.70380872144111], [728.5725940883159, 28.811278415663658], [736.2417792892456, 21.736645622622298], [743.9109644901753, 16.004491677351822], [751.5801496911049, 11.488863468581584], [759.2493348920345, 0.04570545892489485], [766.9185200929642, 0]]]], "errors": [{"type": "GetResourceErrorStatus", "message": "Resource <Server: s_rally_db5bab3f_AJUVuuEY> has ERROR status.\nFault: {u'message': u'Timed out waiting for a reply to message ID 680edb7fd1fe431db81f36202c5d2625', u'code': 500, u'created': u'2016-08-24T14:26:10Z'}", "traceback": "Traceback (most recent call last):\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/runner.py\", line 68, in _run_scenario_once\n    getattr(scenario_inst, method_name)(**scenario_kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/plugins/openstack/scenarios/nova/servers.py\", line 60, in boot_and_list_server\n    self._boot_server(image, flavor, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/atomic.py\", line 84, in func_atomic_actions\n    f = func(self, *args, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/plugins/openstack/scenarios/nova/utils.py\", line 148, in _boot_server\n    check_interval=CONF.benchmark.nova_server_boot_poll_interval\n  File \"/usr/local/lib/python2.7/dist-packages/rally/common/logging.py\", line 236, in wrapper\n    return f(*args, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 148, in wait_for\n    id_attr=id_attr)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 214, in wait_for_status\n    resource = update_resource(resource)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 90, in _get_from_manager\n    fault=getattr(res, \"fault\", \"n/a\"))\nGetResourceErrorStatus: Resource <Server: s_rally_db5bab3f_AJUVuuEY> has ERROR status.\nFault: {u'message': u'Timed out waiting for a reply to message ID 680edb7fd1fe431db81f36202c5d2625', u'code': 500, u'created': u'2016-08-24T14:26:10Z'}\n", "iteration": 9}, {"type": "GetResourceErrorStatus", "message": "Resource <Server: s_rally_db5bab3f_GbuyXKue> has ERROR status.\nFault: {u'message': u'Timed out waiting for a reply to message ID 754d0d53e32a439bae4c121e47cbdfb1', u'code': 500, u'created': u'2016-08-24T14:26:47Z'}", "traceback": "Traceback (most recent call last):\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/runner.py\", line 68, in _run_scenario_once\n    getattr(scenario_inst, method_name)(**scenario_kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/plugins/openstack/scenarios/nova/servers.py\", line 60, in boot_and_list_server\n    self._boot_server(image, flavor, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/atomic.py\", line 84, in func_atomic_actions\n    f = func(self, *args, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/plugins/openstack/scenarios/nova/utils.py\", line 148, in _boot_server\n    check_interval=CONF.benchmark.nova_server_boot_poll_interval\n  File \"/usr/local/lib/python2.7/dist-packages/rally/common/logging.py\", line 236, in wrapper\n    return f(*args, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 148, in wait_for\n    id_attr=id_attr)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 214, in wait_for_status\n    resource = update_resource(resource)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 90, in _get_from_manager\n    fault=getattr(res, \"fault\", \"n/a\"))\nGetResourceErrorStatus: Resource <Server: s_rally_db5bab3f_GbuyXKue> has ERROR status.\nFault: {u'message': u'Timed out waiting for a reply to message ID 754d0d53e32a439bae4c121e47cbdfb1', u'code': 500, u'created': u'2016-08-24T14:26:47Z'}\n", "iteration": 74}, {"type": "GetResourceErrorStatus", "message": "Resource <Server: s_rally_db5bab3f_XTpaMywT> has ERROR status.\nFault: {u'message': u'Timed out waiting for a reply to message ID ca65e0436912416fad8d994d59080d44', u'code': 500, u'created': u'2016-08-24T14:26:50Z'}", "traceback": "Traceback (most recent call last):\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/runner.py\", line 68, in _run_scenario_once\n    getattr(scenario_inst, method_name)(**scenario_kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/plugins/openstack/scenarios/nova/servers.py\", line 60, in boot_and_list_server\n    self._boot_server(image, flavor, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/atomic.py\", line 84, in func_atomic_actions\n    f = func(self, *args, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/plugins/openstack/scenarios/nova/utils.py\", line 148, in _boot_server\n    check_interval=CONF.benchmark.nova_server_boot_poll_interval\n  File \"/usr/local/lib/python2.7/dist-packages/rally/common/logging.py\", line 236, in wrapper\n    return f(*args, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 148, in wait_for\n    id_attr=id_attr)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 214, in wait_for_status\n    resource = update_resource(resource)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 90, in _get_from_manager\n    fault=getattr(res, \"fault\", \"n/a\"))\nGetResourceErrorStatus: Resource <Server: s_rally_db5bab3f_XTpaMywT> has ERROR status.\nFault: {u'message': u'Timed out waiting for a reply to message ID ca65e0436912416fad8d994d59080d44', u'code': 500, u'created': u'2016-08-24T14:26:50Z'}\n", "iteration": 77}, {"type": "GetResourceErrorStatus", "message": "Resource <Server: s_rally_db5bab3f_RJYZEv3N> has ERROR status.\nFault: {u'message': u'Timed out waiting for a reply to message ID 3022dc4acb004d999282f438bc29ec7d', u'code': 500, u'created': u'2016-08-24T14:26:50Z'}", "traceback": "Traceback (most recent call last):\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/runner.py\", line 68, in _run_scenario_once\n    getattr(scenario_inst, method_name)(**scenario_kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/plugins/openstack/scenarios/nova/servers.py\", line 60, in boot_and_list_server\n    self._boot_server(image, flavor, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/atomic.py\", line 84, in func_atomic_actions\n    f = func(self, *args, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/plugins/openstack/scenarios/nova/utils.py\", line 148, in _boot_server\n    check_interval=CONF.benchmark.nova_server_boot_poll_interval\n  File \"/usr/local/lib/python2.7/dist-packages/rally/common/logging.py\", line 236, in wrapper\n    return f(*args, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 148, in wait_for\n    id_attr=id_attr)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 214, in wait_for_status\n    resource = update_resource(resource)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 90, in _get_from_manager\n    fault=getattr(res, \"fault\", \"n/a\"))\nGetResourceErrorStatus: Resource <Server: s_rally_db5bab3f_RJYZEv3N> has ERROR status.\nFault: {u'message': u'Timed out waiting for a reply to message ID 3022dc4acb004d999282f438bc29ec7d', u'code': 500, u'created': u'2016-08-24T14:26:50Z'}\n", "iteration": 78}, {"type": "GetResourceErrorStatus", "message": "Resource <Server: s_rally_db5bab3f_0UgJ3eOR> has ERROR status.\nFault: {u'message': u'Timed out waiting for a reply to message ID 63d940276d8c4b05ab4fb71a1d59e3a9', u'code': 500, u'created': u'2016-08-24T14:27:07Z'}", "traceback": "Traceback (most recent call last):\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/runner.py\", line 68, in _run_scenario_once\n    getattr(scenario_inst, method_name)(**scenario_kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/plugins/openstack/scenarios/nova/servers.py\", line 60, in boot_and_list_server\n    self._boot_server(image, flavor, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/atomic.py\", line 84, in func_atomic_actions\n    f = func(self, *args, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/plugins/openstack/scenarios/nova/utils.py\", line 148, in _boot_server\n    check_interval=CONF.benchmark.nova_server_boot_poll_interval\n  File \"/usr/local/lib/python2.7/dist-packages/rally/common/logging.py\", line 236, in wrapper\n    return f(*args, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 148, in wait_for\n    id_attr=id_attr)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 214, in wait_for_status\n    resource = update_resource(resource)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 90, in _get_from_manager\n    fault=getattr(res, \"fault\", \"n/a\"))\nGetResourceErrorStatus: Resource <Server: s_rally_db5bab3f_0UgJ3eOR> has ERROR status.\nFault: {u'message': u'Timed out waiting for a reply to message ID 63d940276d8c4b05ab4fb71a1d59e3a9', u'code': 500, u'created': u'2016-08-24T14:27:07Z'}\n", "iteration": 93}, {"type": "GetResourceErrorStatus", "message": "Resource <Server: s_rally_db5bab3f_WhDVPQsJ> has ERROR status.\nFault: {u'message': u'Timed out waiting for a reply to message ID 50e711969f104b5cb979a0cffe17977d', u'code': 500, u'created': u'2016-08-24T14:27:07Z'}", "traceback": "Traceback (most recent call last):\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/runner.py\", line 68, in _run_scenario_once\n    getattr(scenario_inst, method_name)(**scenario_kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/plugins/openstack/scenarios/nova/servers.py\", line 60, in boot_and_list_server\n    self._boot_server(image, flavor, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/atomic.py\", line 84, in func_atomic_actions\n    f = func(self, *args, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/plugins/openstack/scenarios/nova/utils.py\", line 148, in _boot_server\n    check_interval=CONF.benchmark.nova_server_boot_poll_interval\n  File \"/usr/local/lib/python2.7/dist-packages/rally/common/logging.py\", line 236, in wrapper\n    return f(*args, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 148, in wait_for\n    id_attr=id_attr)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 214, in wait_for_status\n    resource = update_resource(resource)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 90, in _get_from_manager\n    fault=getattr(res, \"fault\", \"n/a\"))\nGetResourceErrorStatus: Resource <Server: s_rally_db5bab3f_WhDVPQsJ> has ERROR status.\nFault: {u'message': u'Timed out waiting for a reply to message ID 50e711969f104b5cb979a0cffe17977d', u'code': 500, u'created': u'2016-08-24T14:27:07Z'}\n", "iteration": 94}, {"type": "GetResourceErrorStatus", "message": "Resource <Server: s_rally_db5bab3f_vt9hNby9> has ERROR status.\nFault: {u'message': u'Timed out waiting for a reply to message ID 1b567d45665649c4b18940d5cdaf59f1', u'code': 500, u'created': u'2016-08-24T14:27:08Z'}", "traceback": "Traceback (most recent call last):\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/runner.py\", line 68, in _run_scenario_once\n    getattr(scenario_inst, method_name)(**scenario_kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/plugins/openstack/scenarios/nova/servers.py\", line 60, in boot_and_list_server\n    self._boot_server(image, flavor, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/atomic.py\", line 84, in func_atomic_actions\n    f = func(self, *args, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/plugins/openstack/scenarios/nova/utils.py\", line 148, in _boot_server\n    check_interval=CONF.benchmark.nova_server_boot_poll_interval\n  File \"/usr/local/lib/python2.7/dist-packages/rally/common/logging.py\", line 236, in wrapper\n    return f(*args, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 148, in wait_for\n    id_attr=id_attr)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 214, in wait_for_status\n    resource = update_resource(resource)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 90, in _get_from_manager\n    fault=getattr(res, \"fault\", \"n/a\"))\nGetResourceErrorStatus: Resource <Server: s_rally_db5bab3f_vt9hNby9> has ERROR status.\nFault: {u'message': u'Timed out waiting for a reply to message ID 1b567d45665649c4b18940d5cdaf59f1', u'code': 500, u'created': u'2016-08-24T14:27:08Z'}\n", "iteration": 96}, {"type": "GetResourceErrorStatus", "message": "Resource <Server: s_rally_db5bab3f_RYUDK1as> has ERROR status.\nFault: {u'message': u'Timed out waiting for a reply to message ID c679ce978db445df939fca32d8093fa0', u'code': 500, u'created': u'2016-08-24T14:27:09Z'}", "traceback": "Traceback (most recent call last):\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/runner.py\", line 68, in _run_scenario_once\n    getattr(scenario_inst, method_name)(**scenario_kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/plugins/openstack/scenarios/nova/servers.py\", line 60, in boot_and_list_server\n    self._boot_server(image, flavor, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/atomic.py\", line 84, in func_atomic_actions\n    f = func(self, *args, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/plugins/openstack/scenarios/nova/utils.py\", line 148, in _boot_server\n    check_interval=CONF.benchmark.nova_server_boot_poll_interval\n  File \"/usr/local/lib/python2.7/dist-packages/rally/common/logging.py\", line 236, in wrapper\n    return f(*args, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 148, in wait_for\n    id_attr=id_attr)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 214, in wait_for_status\n    resource = update_resource(resource)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 90, in _get_from_manager\n    fault=getattr(res, \"fault\", \"n/a\"))\nGetResourceErrorStatus: Resource <Server: s_rally_db5bab3f_RYUDK1as> has ERROR status.\nFault: {u'message': u'Timed out waiting for a reply to message ID c679ce978db445df939fca32d8093fa0', u'code': 500, u'created': u'2016-08-24T14:27:09Z'}\n", "iteration": 97}, {"type": "GetResourceErrorStatus", "message": "Resource <Server: s_rally_db5bab3f_taOJjYGx> has ERROR status.\nFault: {u'message': u'Timed out waiting for a reply to message ID ba3f98f4162c4a55a6853274dce2821f', u'code': 500, u'created': u'2016-08-24T14:27:10Z'}", "traceback": "Traceback (most recent call last):\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/runner.py\", line 68, in _run_scenario_once\n    getattr(scenario_inst, method_name)(**scenario_kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/plugins/openstack/scenarios/nova/servers.py\", line 60, in boot_and_list_server\n    self._boot_server(image, flavor, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/atomic.py\", line 84, in func_atomic_actions\n    f = func(self, *args, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/plugins/openstack/scenarios/nova/utils.py\", line 148, in _boot_server\n    check_interval=CONF.benchmark.nova_server_boot_poll_interval\n  File \"/usr/local/lib/python2.7/dist-packages/rally/common/logging.py\", line 236, in wrapper\n    return f(*args, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 148, in wait_for\n    id_attr=id_attr)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 214, in wait_for_status\n    resource = update_resource(resource)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 90, in _get_from_manager\n    fault=getattr(res, \"fault\", \"n/a\"))\nGetResourceErrorStatus: Resource <Server: s_rally_db5bab3f_taOJjYGx> has ERROR status.\nFault: {u'message': u'Timed out waiting for a reply to message ID ba3f98f4162c4a55a6853274dce2821f', u'code': 500, u'created': u'2016-08-24T14:27:10Z'}\n", "iteration": 98}, {"type": "GetResourceErrorStatus", "message": "Resource <Server: s_rally_db5bab3f_1WzlHuPX> has ERROR status.\nFault: {u'message': u'Timed out waiting for a reply to message ID 2b91c85023e444648fa1407ad2ecfb11', u'code': 500, u'created': u'2016-08-24T14:27:11Z'}", "traceback": "Traceback (most recent call last):\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/runner.py\", line 68, in _run_scenario_once\n    getattr(scenario_inst, method_name)(**scenario_kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/plugins/openstack/scenarios/nova/servers.py\", line 60, in boot_and_list_server\n    self._boot_server(image, flavor, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/atomic.py\", line 84, in func_atomic_actions\n    f = func(self, *args, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/plugins/openstack/scenarios/nova/utils.py\", line 148, in _boot_server\n    check_interval=CONF.benchmark.nova_server_boot_poll_interval\n  File \"/usr/local/lib/python2.7/dist-packages/rally/common/logging.py\", line 236, in wrapper\n    return f(*args, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 148, in wait_for\n    id_attr=id_attr)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 214, in wait_for_status\n    resource = update_resource(resource)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 90, in _get_from_manager\n    fault=getattr(res, \"fault\", \"n/a\"))\nGetResourceErrorStatus: Resource <Server: s_rally_db5bab3f_1WzlHuPX> has ERROR status.\nFault: {u'message': u'Timed out waiting for a reply to message ID 2b91c85023e444648fa1407ad2ecfb11', u'code': 500, u'created': u'2016-08-24T14:27:11Z'}\n", "iteration": 99}, {"type": "GetResourceErrorStatus", "message": "Resource <Server: s_rally_db5bab3f_VuS3ZwWl> has ERROR status.\nFault: {u'message': u'Timed out waiting for a reply to message ID 13c693e1458e484d9bf04dfebca80b74', u'code': 500, u'created': u'2016-08-24T14:27:12Z'}", "traceback": "Traceback (most recent call last):\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/runner.py\", line 68, in _run_scenario_once\n    getattr(scenario_inst, method_name)(**scenario_kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/plugins/openstack/scenarios/nova/servers.py\", line 60, in boot_and_list_server\n    self._boot_server(image, flavor, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/atomic.py\", line 84, in func_atomic_actions\n    f = func(self, *args, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/plugins/openstack/scenarios/nova/utils.py\", line 148, in _boot_server\n    check_interval=CONF.benchmark.nova_server_boot_poll_interval\n  File \"/usr/local/lib/python2.7/dist-packages/rally/common/logging.py\", line 236, in wrapper\n    return f(*args, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 148, in wait_for\n    id_attr=id_attr)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 214, in wait_for_status\n    resource = update_resource(resource)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 90, in _get_from_manager\n    fault=getattr(res, \"fault\", \"n/a\"))\nGetResourceErrorStatus: Resource <Server: s_rally_db5bab3f_VuS3ZwWl> has ERROR status.\nFault: {u'message': u'Timed out waiting for a reply to message ID 13c693e1458e484d9bf04dfebca80b74', u'code': 500, u'created': u'2016-08-24T14:27:12Z'}\n", "iteration": 100}, {"type": "GetResourceErrorStatus", "message": "Resource <Server: s_rally_db5bab3f_zDSARaTl> has ERROR status.\nFault: {u'message': u'Timed out waiting for a reply to message ID 17dbebf917d54961ac0db30e178a4426', u'code': 500, u'created': u'2016-08-24T14:27:13Z'}", "traceback": "Traceback (most recent call last):\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/runner.py\", line 68, in _run_scenario_once\n    getattr(scenario_inst, method_name)(**scenario_kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/plugins/openstack/scenarios/nova/servers.py\", line 60, in boot_and_list_server\n    self._boot_server(image, flavor, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/atomic.py\", line 84, in func_atomic_actions\n    f = func(self, *args, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/plugins/openstack/scenarios/nova/utils.py\", line 148, in _boot_server\n    check_interval=CONF.benchmark.nova_server_boot_poll_interval\n  File \"/usr/local/lib/python2.7/dist-packages/rally/common/logging.py\", line 236, in wrapper\n    return f(*args, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 148, in wait_for\n    id_attr=id_attr)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 214, in wait_for_status\n    resource = update_resource(resource)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 90, in _get_from_manager\n    fault=getattr(res, \"fault\", \"n/a\"))\nGetResourceErrorStatus: Resource <Server: s_rally_db5bab3f_zDSARaTl> has ERROR status.\nFault: {u'message': u'Timed out waiting for a reply to message ID 17dbebf917d54961ac0db30e178a4426', u'code': 500, u'created': u'2016-08-24T14:27:13Z'}\n", "iteration": 102}, {"type": "GetResourceErrorStatus", "message": "Resource <Server: s_rally_db5bab3f_EYy8A8op> has ERROR status.\nFault: {u'message': u'Timed out waiting for a reply to message ID b3bb45a439d943caa8283eac0aca7eb6', u'code': 500, u'created': u'2016-08-24T14:28:51Z'}", "traceback": "Traceback (most recent call last):\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/runner.py\", line 68, in _run_scenario_once\n    getattr(scenario_inst, method_name)(**scenario_kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/plugins/openstack/scenarios/nova/servers.py\", line 60, in boot_and_list_server\n    self._boot_server(image, flavor, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/atomic.py\", line 84, in func_atomic_actions\n    f = func(self, *args, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/plugins/openstack/scenarios/nova/utils.py\", line 148, in _boot_server\n    check_interval=CONF.benchmark.nova_server_boot_poll_interval\n  File \"/usr/local/lib/python2.7/dist-packages/rally/common/logging.py\", line 236, in wrapper\n    return f(*args, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 148, in wait_for\n    id_attr=id_attr)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 214, in wait_for_status\n    resource = update_resource(resource)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 90, in _get_from_manager\n    fault=getattr(res, \"fault\", \"n/a\"))\nGetResourceErrorStatus: Resource <Server: s_rally_db5bab3f_EYy8A8op> has ERROR status.\nFault: {u'message': u'Timed out waiting for a reply to message ID b3bb45a439d943caa8283eac0aca7eb6', u'code': 500, u'created': u'2016-08-24T14:28:51Z'}\n", "iteration": 134}, {"type": "GetResourceErrorStatus", "message": "Resource <Server: s_rally_db5bab3f_2alX2quK> has ERROR status.\nFault: {u'message': u'Timed out waiting for a reply to message ID 9a6222cf873c43ac9dcabf4a2cda3596', u'code': 500, u'created': u'2016-08-24T14:29:18Z'}", "traceback": "Traceback (most recent call last):\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/runner.py\", line 68, in _run_scenario_once\n    getattr(scenario_inst, method_name)(**scenario_kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/plugins/openstack/scenarios/nova/servers.py\", line 60, in boot_and_list_server\n    self._boot_server(image, flavor, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/atomic.py\", line 84, in func_atomic_actions\n    f = func(self, *args, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/plugins/openstack/scenarios/nova/utils.py\", line 148, in _boot_server\n    check_interval=CONF.benchmark.nova_server_boot_poll_interval\n  File \"/usr/local/lib/python2.7/dist-packages/rally/common/logging.py\", line 236, in wrapper\n    return f(*args, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 148, in wait_for\n    id_attr=id_attr)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 214, in wait_for_status\n    resource = update_resource(resource)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 90, in _get_from_manager\n    fault=getattr(res, \"fault\", \"n/a\"))\nGetResourceErrorStatus: Resource <Server: s_rally_db5bab3f_2alX2quK> has ERROR status.\nFault: {u'message': u'Timed out waiting for a reply to message ID 9a6222cf873c43ac9dcabf4a2cda3596', u'code': 500, u'created': u'2016-08-24T14:29:18Z'}\n", "iteration": 146}, {"type": "GetResourceErrorStatus", "message": "Resource <Server: s_rally_db5bab3f_cMXbhcuJ> has ERROR status.\nFault: {u'message': u'Timed out waiting for a reply to message ID 2694ad559e4f493fbc43d216e3639238', u'code': 500, u'created': u'2016-08-24T14:29:21Z'}", "traceback": "Traceback (most recent call last):\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/runner.py\", line 68, in _run_scenario_once\n    getattr(scenario_inst, method_name)(**scenario_kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/plugins/openstack/scenarios/nova/servers.py\", line 60, in boot_and_list_server\n    self._boot_server(image, flavor, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/atomic.py\", line 84, in func_atomic_actions\n    f = func(self, *args, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/plugins/openstack/scenarios/nova/utils.py\", line 148, in _boot_server\n    check_interval=CONF.benchmark.nova_server_boot_poll_interval\n  File \"/usr/local/lib/python2.7/dist-packages/rally/common/logging.py\", line 236, in wrapper\n    return f(*args, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 148, in wait_for\n    id_attr=id_attr)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 214, in wait_for_status\n    resource = update_resource(resource)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 90, in _get_from_manager\n    fault=getattr(res, \"fault\", \"n/a\"))\nGetResourceErrorStatus: Resource <Server: s_rally_db5bab3f_cMXbhcuJ> has ERROR status.\nFault: {u'message': u'Timed out waiting for a reply to message ID 2694ad559e4f493fbc43d216e3639238', u'code': 500, u'created': u'2016-08-24T14:29:21Z'}\n", "iteration": 156}, {"type": "GetResourceErrorStatus", "message": "Resource <Server: s_rally_db5bab3f_0KnWiV9w> has ERROR status.\nFault: {u'message': u'Timed out waiting for a reply to message ID c358ed668c454715910291e3bd8dea81', u'code': 500, u'created': u'2016-08-24T14:29:52Z'}", "traceback": "Traceback (most recent call last):\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/runner.py\", line 68, in _run_scenario_once\n    getattr(scenario_inst, method_name)(**scenario_kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/plugins/openstack/scenarios/nova/servers.py\", line 60, in boot_and_list_server\n    self._boot_server(image, flavor, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/atomic.py\", line 84, in func_atomic_actions\n    f = func(self, *args, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/plugins/openstack/scenarios/nova/utils.py\", line 148, in _boot_server\n    check_interval=CONF.benchmark.nova_server_boot_poll_interval\n  File \"/usr/local/lib/python2.7/dist-packages/rally/common/logging.py\", line 236, in wrapper\n    return f(*args, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 148, in wait_for\n    id_attr=id_attr)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 214, in wait_for_status\n    resource = update_resource(resource)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 90, in _get_from_manager\n    fault=getattr(res, \"fault\", \"n/a\"))\nGetResourceErrorStatus: Resource <Server: s_rally_db5bab3f_0KnWiV9w> has ERROR status.\nFault: {u'message': u'Timed out waiting for a reply to message ID c358ed668c454715910291e3bd8dea81', u'code': 500, u'created': u'2016-08-24T14:29:52Z'}\n", "iteration": 172}, {"type": "GetResourceErrorStatus", "message": "Resource <Server: s_rally_db5bab3f_sOSQXsLt> has ERROR status.\nFault: {u'message': u'Timed out waiting for a reply to message ID 5becca0077c14c4d86e056aa5d28020b', u'code': 500, u'created': u'2016-08-24T14:29:52Z'}", "traceback": "Traceback (most recent call last):\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/runner.py\", line 68, in _run_scenario_once\n    getattr(scenario_inst, method_name)(**scenario_kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/plugins/openstack/scenarios/nova/servers.py\", line 60, in boot_and_list_server\n    self._boot_server(image, flavor, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/atomic.py\", line 84, in func_atomic_actions\n    f = func(self, *args, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/plugins/openstack/scenarios/nova/utils.py\", line 148, in _boot_server\n    check_interval=CONF.benchmark.nova_server_boot_poll_interval\n  File \"/usr/local/lib/python2.7/dist-packages/rally/common/logging.py\", line 236, in wrapper\n    return f(*args, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 148, in wait_for\n    id_attr=id_attr)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 214, in wait_for_status\n    resource = update_resource(resource)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 90, in _get_from_manager\n    fault=getattr(res, \"fault\", \"n/a\"))\nGetResourceErrorStatus: Resource <Server: s_rally_db5bab3f_sOSQXsLt> has ERROR status.\nFault: {u'message': u'Timed out waiting for a reply to message ID 5becca0077c14c4d86e056aa5d28020b', u'code': 500, u'created': u'2016-08-24T14:29:52Z'}\n", "iteration": 173}, {"type": "GetResourceErrorStatus", "message": "Resource <Server: s_rally_db5bab3f_AeauquuI> has ERROR status.\nFault: {u'message': u'Timed out waiting for a reply to message ID 1980b9f3f5af49b999d038e8b53d573d', u'code': 500, u'created': u'2016-08-24T14:29:57Z'}", "traceback": "Traceback (most recent call last):\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/runner.py\", line 68, in _run_scenario_once\n    getattr(scenario_inst, method_name)(**scenario_kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/plugins/openstack/scenarios/nova/servers.py\", line 60, in boot_and_list_server\n    self._boot_server(image, flavor, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/atomic.py\", line 84, in func_atomic_actions\n    f = func(self, *args, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/plugins/openstack/scenarios/nova/utils.py\", line 148, in _boot_server\n    check_interval=CONF.benchmark.nova_server_boot_poll_interval\n  File \"/usr/local/lib/python2.7/dist-packages/rally/common/logging.py\", line 236, in wrapper\n    return f(*args, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 148, in wait_for\n    id_attr=id_attr)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 214, in wait_for_status\n    resource = update_resource(resource)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 90, in _get_from_manager\n    fault=getattr(res, \"fault\", \"n/a\"))\nGetResourceErrorStatus: Resource <Server: s_rally_db5bab3f_AeauquuI> has ERROR status.\nFault: {u'message': u'Timed out waiting for a reply to message ID 1980b9f3f5af49b999d038e8b53d573d', u'code': 500, u'created': u'2016-08-24T14:29:57Z'}\n", "iteration": 180}, {"type": "GetResourceErrorStatus", "message": "Resource <Server: s_rally_db5bab3f_dzMQemG0> has ERROR status.\nFault: {u'message': u'Timed out waiting for a reply to message ID 4ffab9cae1cd4a0ebf45ad41efa7cc98', u'code': 500, u'created': u'2016-08-24T14:29:57Z'}", "traceback": "Traceback (most recent call last):\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/runner.py\", line 68, in _run_scenario_once\n    getattr(scenario_inst, method_name)(**scenario_kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/plugins/openstack/scenarios/nova/servers.py\", line 60, in boot_and_list_server\n    self._boot_server(image, flavor, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/atomic.py\", line 84, in func_atomic_actions\n    f = func(self, *args, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/plugins/openstack/scenarios/nova/utils.py\", line 148, in _boot_server\n    check_interval=CONF.benchmark.nova_server_boot_poll_interval\n  File \"/usr/local/lib/python2.7/dist-packages/rally/common/logging.py\", line 236, in wrapper\n    return f(*args, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 148, in wait_for\n    id_attr=id_attr)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 214, in wait_for_status\n    resource = update_resource(resource)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 90, in _get_from_manager\n    fault=getattr(res, \"fault\", \"n/a\"))\nGetResourceErrorStatus: Resource <Server: s_rally_db5bab3f_dzMQemG0> has ERROR status.\nFault: {u'message': u'Timed out waiting for a reply to message ID 4ffab9cae1cd4a0ebf45ad41efa7cc98', u'code': 500, u'created': u'2016-08-24T14:29:57Z'}\n", "iteration": 181}, {"type": "GetResourceErrorStatus", "message": "Resource <Server: s_rally_db5bab3f_m6CYcy1C> has ERROR status.\nFault: {u'message': u'Timed out waiting for a reply to message ID d8258a813826454ea23a961e67d845d0', u'code': 500, u'created': u'2016-08-24T14:31:53Z'}", "traceback": "Traceback (most recent call last):\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/runner.py\", line 68, in _run_scenario_once\n    getattr(scenario_inst, method_name)(**scenario_kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/plugins/openstack/scenarios/nova/servers.py\", line 60, in boot_and_list_server\n    self._boot_server(image, flavor, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/atomic.py\", line 84, in func_atomic_actions\n    f = func(self, *args, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/plugins/openstack/scenarios/nova/utils.py\", line 148, in _boot_server\n    check_interval=CONF.benchmark.nova_server_boot_poll_interval\n  File \"/usr/local/lib/python2.7/dist-packages/rally/common/logging.py\", line 236, in wrapper\n    return f(*args, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 148, in wait_for\n    id_attr=id_attr)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 214, in wait_for_status\n    resource = update_resource(resource)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 90, in _get_from_manager\n    fault=getattr(res, \"fault\", \"n/a\"))\nGetResourceErrorStatus: Resource <Server: s_rally_db5bab3f_m6CYcy1C> has ERROR status.\nFault: {u'message': u'Timed out waiting for a reply to message ID d8258a813826454ea23a961e67d845d0', u'code': 500, u'created': u'2016-08-24T14:31:53Z'}\n", "iteration": 215}, {"type": "GetResourceErrorStatus", "message": "Resource <Server: s_rally_db5bab3f_RhyCC4hk> has ERROR status.\nFault: {u'message': u'Timed out waiting for a reply to message ID a4c0a5ef18e54510a9adbaffca7a0c0f', u'code': 500, u'created': u'2016-08-24T14:31:58Z'}", "traceback": "Traceback (most recent call last):\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/runner.py\", line 68, in _run_scenario_once\n    getattr(scenario_inst, method_name)(**scenario_kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/plugins/openstack/scenarios/nova/servers.py\", line 60, in boot_and_list_server\n    self._boot_server(image, flavor, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/atomic.py\", line 84, in func_atomic_actions\n    f = func(self, *args, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/plugins/openstack/scenarios/nova/utils.py\", line 148, in _boot_server\n    check_interval=CONF.benchmark.nova_server_boot_poll_interval\n  File \"/usr/local/lib/python2.7/dist-packages/rally/common/logging.py\", line 236, in wrapper\n    return f(*args, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 148, in wait_for\n    id_attr=id_attr)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 214, in wait_for_status\n    resource = update_resource(resource)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 90, in _get_from_manager\n    fault=getattr(res, \"fault\", \"n/a\"))\nGetResourceErrorStatus: Resource <Server: s_rally_db5bab3f_RhyCC4hk> has ERROR status.\nFault: {u'message': u'Timed out waiting for a reply to message ID a4c0a5ef18e54510a9adbaffca7a0c0f', u'code': 500, u'created': u'2016-08-24T14:31:58Z'}\n", "iteration": 221}, {"type": "GetResourceErrorStatus", "message": "Resource <Server: s_rally_db5bab3f_KTSZ2YIp> has ERROR status.\nFault: {u'message': u'Timed out waiting for a reply to message ID 343ffc9a04764e03a8689e29ba0a58e5', u'code': 500, u'created': u'2016-08-24T14:31:59Z'}", "traceback": "Traceback (most recent call last):\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/runner.py\", line 68, in _run_scenario_once\n    getattr(scenario_inst, method_name)(**scenario_kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/plugins/openstack/scenarios/nova/servers.py\", line 60, in boot_and_list_server\n    self._boot_server(image, flavor, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/atomic.py\", line 84, in func_atomic_actions\n    f = func(self, *args, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/plugins/openstack/scenarios/nova/utils.py\", line 148, in _boot_server\n    check_interval=CONF.benchmark.nova_server_boot_poll_interval\n  File \"/usr/local/lib/python2.7/dist-packages/rally/common/logging.py\", line 236, in wrapper\n    return f(*args, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 148, in wait_for\n    id_attr=id_attr)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 214, in wait_for_status\n    resource = update_resource(resource)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 90, in _get_from_manager\n    fault=getattr(res, \"fault\", \"n/a\"))\nGetResourceErrorStatus: Resource <Server: s_rally_db5bab3f_KTSZ2YIp> has ERROR status.\nFault: {u'message': u'Timed out waiting for a reply to message ID 343ffc9a04764e03a8689e29ba0a58e5', u'code': 500, u'created': u'2016-08-24T14:31:59Z'}\n", "iteration": 222}, {"type": "GetResourceErrorStatus", "message": "Resource <Server: s_rally_db5bab3f_hnQNIGbS> has ERROR status.\nFault: {u'message': u'Timed out waiting for a reply to message ID 6a43b10195eb481da86cf64b6e91e3d2', u'code': 500, u'created': u'2016-08-24T14:32:00Z'}", "traceback": "Traceback (most recent call last):\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/runner.py\", line 68, in _run_scenario_once\n    getattr(scenario_inst, method_name)(**scenario_kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/plugins/openstack/scenarios/nova/servers.py\", line 60, in boot_and_list_server\n    self._boot_server(image, flavor, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/atomic.py\", line 84, in func_atomic_actions\n    f = func(self, *args, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/plugins/openstack/scenarios/nova/utils.py\", line 148, in _boot_server\n    check_interval=CONF.benchmark.nova_server_boot_poll_interval\n  File \"/usr/local/lib/python2.7/dist-packages/rally/common/logging.py\", line 236, in wrapper\n    return f(*args, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 148, in wait_for\n    id_attr=id_attr)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 214, in wait_for_status\n    resource = update_resource(resource)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 90, in _get_from_manager\n    fault=getattr(res, \"fault\", \"n/a\"))\nGetResourceErrorStatus: Resource <Server: s_rally_db5bab3f_hnQNIGbS> has ERROR status.\nFault: {u'message': u'Timed out waiting for a reply to message ID 6a43b10195eb481da86cf64b6e91e3d2', u'code': 500, u'created': u'2016-08-24T14:32:00Z'}\n", "iteration": 223}, {"type": "GetResourceErrorStatus", "message": "Resource <Server: s_rally_db5bab3f_u7vjtswp> has ERROR status.\nFault: {u'message': u'Timed out waiting for a reply to message ID a05ff260b2524fce86d33873f7f0a284', u'code': 500, u'created': u'2016-08-24T14:32:08Z'}", "traceback": "Traceback (most recent call last):\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/runner.py\", line 68, in _run_scenario_once\n    getattr(scenario_inst, method_name)(**scenario_kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/plugins/openstack/scenarios/nova/servers.py\", line 60, in boot_and_list_server\n    self._boot_server(image, flavor, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/atomic.py\", line 84, in func_atomic_actions\n    f = func(self, *args, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/plugins/openstack/scenarios/nova/utils.py\", line 148, in _boot_server\n    check_interval=CONF.benchmark.nova_server_boot_poll_interval\n  File \"/usr/local/lib/python2.7/dist-packages/rally/common/logging.py\", line 236, in wrapper\n    return f(*args, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 148, in wait_for\n    id_attr=id_attr)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 214, in wait_for_status\n    resource = update_resource(resource)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 90, in _get_from_manager\n    fault=getattr(res, \"fault\", \"n/a\"))\nGetResourceErrorStatus: Resource <Server: s_rally_db5bab3f_u7vjtswp> has ERROR status.\nFault: {u'message': u'Timed out waiting for a reply to message ID a05ff260b2524fce86d33873f7f0a284', u'code': 500, u'created': u'2016-08-24T14:32:08Z'}\n", "iteration": 233}, {"type": "GetResourceErrorStatus", "message": "Resource <Server: s_rally_db5bab3f_cjRCGihP> has ERROR status.\nFault: {u'message': u'Timed out waiting for a reply to message ID a88a5b0996064ea9aa0b4e9a9f09413d', u'code': 500, u'created': u'2016-08-24T14:32:12Z'}", "traceback": "Traceback (most recent call last):\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/runner.py\", line 68, in _run_scenario_once\n    getattr(scenario_inst, method_name)(**scenario_kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/plugins/openstack/scenarios/nova/servers.py\", line 60, in boot_and_list_server\n    self._boot_server(image, flavor, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/atomic.py\", line 84, in func_atomic_actions\n    f = func(self, *args, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/plugins/openstack/scenarios/nova/utils.py\", line 148, in _boot_server\n    check_interval=CONF.benchmark.nova_server_boot_poll_interval\n  File \"/usr/local/lib/python2.7/dist-packages/rally/common/logging.py\", line 236, in wrapper\n    return f(*args, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 148, in wait_for\n    id_attr=id_attr)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 214, in wait_for_status\n    resource = update_resource(resource)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 90, in _get_from_manager\n    fault=getattr(res, \"fault\", \"n/a\"))\nGetResourceErrorStatus: Resource <Server: s_rally_db5bab3f_cjRCGihP> has ERROR status.\nFault: {u'message': u'Timed out waiting for a reply to message ID a88a5b0996064ea9aa0b4e9a9f09413d', u'code': 500, u'created': u'2016-08-24T14:32:12Z'}\n", "iteration": 237}, {"type": "GetResourceErrorStatus", "message": "Resource <Server: s_rally_db5bab3f_uUC2vz3b> has ERROR status.\nFault: {u'message': u'Timed out waiting for a reply to message ID 6e74219c282e46bf997df6c2f167aba3', u'code': 500, u'created': u'2016-08-24T14:32:59Z'}", "traceback": "Traceback (most recent call last):\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/runner.py\", line 68, in _run_scenario_once\n    getattr(scenario_inst, method_name)(**scenario_kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/plugins/openstack/scenarios/nova/servers.py\", line 60, in boot_and_list_server\n    self._boot_server(image, flavor, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/atomic.py\", line 84, in func_atomic_actions\n    f = func(self, *args, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/plugins/openstack/scenarios/nova/utils.py\", line 148, in _boot_server\n    check_interval=CONF.benchmark.nova_server_boot_poll_interval\n  File \"/usr/local/lib/python2.7/dist-packages/rally/common/logging.py\", line 236, in wrapper\n    return f(*args, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 148, in wait_for\n    id_attr=id_attr)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 214, in wait_for_status\n    resource = update_resource(resource)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 90, in _get_from_manager\n    fault=getattr(res, \"fault\", \"n/a\"))\nGetResourceErrorStatus: Resource <Server: s_rally_db5bab3f_uUC2vz3b> has ERROR status.\nFault: {u'message': u'Timed out waiting for a reply to message ID 6e74219c282e46bf997df6c2f167aba3', u'code': 500, u'created': u'2016-08-24T14:32:59Z'}\n", "iteration": 275}, {"type": "GetResourceErrorStatus", "message": "Resource <Server: s_rally_db5bab3f_fmowXS1r> has ERROR status.\nFault: {u'message': u'Timed out waiting for a reply to message ID 41dadfaf240e4870b0dde54f8cc02705', u'code': 500, u'created': u'2016-08-24T14:32:59Z'}", "traceback": "Traceback (most recent call last):\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/runner.py\", line 68, in _run_scenario_once\n    getattr(scenario_inst, method_name)(**scenario_kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/plugins/openstack/scenarios/nova/servers.py\", line 60, in boot_and_list_server\n    self._boot_server(image, flavor, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/atomic.py\", line 84, in func_atomic_actions\n    f = func(self, *args, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/plugins/openstack/scenarios/nova/utils.py\", line 148, in _boot_server\n    check_interval=CONF.benchmark.nova_server_boot_poll_interval\n  File \"/usr/local/lib/python2.7/dist-packages/rally/common/logging.py\", line 236, in wrapper\n    return f(*args, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 148, in wait_for\n    id_attr=id_attr)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 214, in wait_for_status\n    resource = update_resource(resource)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 90, in _get_from_manager\n    fault=getattr(res, \"fault\", \"n/a\"))\nGetResourceErrorStatus: Resource <Server: s_rally_db5bab3f_fmowXS1r> has ERROR status.\nFault: {u'message': u'Timed out waiting for a reply to message ID 41dadfaf240e4870b0dde54f8cc02705', u'code': 500, u'created': u'2016-08-24T14:32:59Z'}\n", "iteration": 276}, {"type": "GetResourceErrorStatus", "message": "Resource <Server: s_rally_db5bab3f_nio9z6fX> has ERROR status.\nFault: {u'message': u'Timed out waiting for a reply to message ID ae0998f0703d4e7e962cd443eb8931b8', u'code': 500, u'created': u'2016-08-24T14:33:00Z'}", "traceback": "Traceback (most recent call last):\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/runner.py\", line 68, in _run_scenario_once\n    getattr(scenario_inst, method_name)(**scenario_kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/plugins/openstack/scenarios/nova/servers.py\", line 60, in boot_and_list_server\n    self._boot_server(image, flavor, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/atomic.py\", line 84, in func_atomic_actions\n    f = func(self, *args, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/plugins/openstack/scenarios/nova/utils.py\", line 148, in _boot_server\n    check_interval=CONF.benchmark.nova_server_boot_poll_interval\n  File \"/usr/local/lib/python2.7/dist-packages/rally/common/logging.py\", line 236, in wrapper\n    return f(*args, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 148, in wait_for\n    id_attr=id_attr)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 214, in wait_for_status\n    resource = update_resource(resource)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 90, in _get_from_manager\n    fault=getattr(res, \"fault\", \"n/a\"))\nGetResourceErrorStatus: Resource <Server: s_rally_db5bab3f_nio9z6fX> has ERROR status.\nFault: {u'message': u'Timed out waiting for a reply to message ID ae0998f0703d4e7e962cd443eb8931b8', u'code': 500, u'created': u'2016-08-24T14:33:00Z'}\n", "iteration": 277}, {"type": "GetResourceErrorStatus", "message": "Resource <Server: s_rally_db5bab3f_dr2GH3e2> has ERROR status.\nFault: {u'message': u'Timed out waiting for a reply to message ID 35ae20dafdd54db89481493f3a29ee76', u'code': 500, u'created': u'2016-08-24T14:33:02Z'}", "traceback": "Traceback (most recent call last):\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/runner.py\", line 68, in _run_scenario_once\n    getattr(scenario_inst, method_name)(**scenario_kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/plugins/openstack/scenarios/nova/servers.py\", line 60, in boot_and_list_server\n    self._boot_server(image, flavor, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/atomic.py\", line 84, in func_atomic_actions\n    f = func(self, *args, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/plugins/openstack/scenarios/nova/utils.py\", line 148, in _boot_server\n    check_interval=CONF.benchmark.nova_server_boot_poll_interval\n  File \"/usr/local/lib/python2.7/dist-packages/rally/common/logging.py\", line 236, in wrapper\n    return f(*args, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 148, in wait_for\n    id_attr=id_attr)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 214, in wait_for_status\n    resource = update_resource(resource)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 90, in _get_from_manager\n    fault=getattr(res, \"fault\", \"n/a\"))\nGetResourceErrorStatus: Resource <Server: s_rally_db5bab3f_dr2GH3e2> has ERROR status.\nFault: {u'message': u'Timed out waiting for a reply to message ID 35ae20dafdd54db89481493f3a29ee76', u'code': 500, u'created': u'2016-08-24T14:33:02Z'}\n", "iteration": 279}, {"type": "GetResourceErrorStatus", "message": "Resource <Server: s_rally_db5bab3f_s6rT2WvC> has ERROR status.\nFault: {u'message': u'Timed out waiting for a reply to message ID e2e4329d75264729b2010cfeb2785994', u'code': 500, u'created': u'2016-08-24T14:33:02Z'}", "traceback": "Traceback (most recent call last):\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/runner.py\", line 68, in _run_scenario_once\n    getattr(scenario_inst, method_name)(**scenario_kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/plugins/openstack/scenarios/nova/servers.py\", line 60, in boot_and_list_server\n    self._boot_server(image, flavor, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/atomic.py\", line 84, in func_atomic_actions\n    f = func(self, *args, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/plugins/openstack/scenarios/nova/utils.py\", line 148, in _boot_server\n    check_interval=CONF.benchmark.nova_server_boot_poll_interval\n  File \"/usr/local/lib/python2.7/dist-packages/rally/common/logging.py\", line 236, in wrapper\n    return f(*args, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 148, in wait_for\n    id_attr=id_attr)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 214, in wait_for_status\n    resource = update_resource(resource)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 90, in _get_from_manager\n    fault=getattr(res, \"fault\", \"n/a\"))\nGetResourceErrorStatus: Resource <Server: s_rally_db5bab3f_s6rT2WvC> has ERROR status.\nFault: {u'message': u'Timed out waiting for a reply to message ID e2e4329d75264729b2010cfeb2785994', u'code': 500, u'created': u'2016-08-24T14:33:02Z'}\n", "iteration": 280}, {"type": "GetResourceErrorStatus", "message": "Resource <Server: s_rally_db5bab3f_1eMLl6Wm> has ERROR status.\nFault: {u'message': u'Timed out waiting for a reply to message ID 76ffbcb0397943588ea753e56a36a382', u'code': 500, u'created': u'2016-08-24T14:34:03Z'}", "traceback": "Traceback (most recent call last):\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/runner.py\", line 68, in _run_scenario_once\n    getattr(scenario_inst, method_name)(**scenario_kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/plugins/openstack/scenarios/nova/servers.py\", line 60, in boot_and_list_server\n    self._boot_server(image, flavor, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/atomic.py\", line 84, in func_atomic_actions\n    f = func(self, *args, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/plugins/openstack/scenarios/nova/utils.py\", line 148, in _boot_server\n    check_interval=CONF.benchmark.nova_server_boot_poll_interval\n  File \"/usr/local/lib/python2.7/dist-packages/rally/common/logging.py\", line 236, in wrapper\n    return f(*args, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 148, in wait_for\n    id_attr=id_attr)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 214, in wait_for_status\n    resource = update_resource(resource)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 90, in _get_from_manager\n    fault=getattr(res, \"fault\", \"n/a\"))\nGetResourceErrorStatus: Resource <Server: s_rally_db5bab3f_1eMLl6Wm> has ERROR status.\nFault: {u'message': u'Timed out waiting for a reply to message ID 76ffbcb0397943588ea753e56a36a382', u'code': 500, u'created': u'2016-08-24T14:34:03Z'}\n", "iteration": 297}, {"type": "GetResourceErrorStatus", "message": "Resource <Server: s_rally_db5bab3f_Ite5jRRL> has ERROR status.\nFault: {u'message': u'Timed out waiting for a reply to message ID 4d0c584aed24430ca672fde482ea5a23', u'code': 500, u'created': u'2016-08-24T14:35:01Z'}", "traceback": "Traceback (most recent call last):\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/runner.py\", line 68, in _run_scenario_once\n    getattr(scenario_inst, method_name)(**scenario_kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/plugins/openstack/scenarios/nova/servers.py\", line 60, in boot_and_list_server\n    self._boot_server(image, flavor, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/atomic.py\", line 84, in func_atomic_actions\n    f = func(self, *args, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/plugins/openstack/scenarios/nova/utils.py\", line 148, in _boot_server\n    check_interval=CONF.benchmark.nova_server_boot_poll_interval\n  File \"/usr/local/lib/python2.7/dist-packages/rally/common/logging.py\", line 236, in wrapper\n    return f(*args, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 148, in wait_for\n    id_attr=id_attr)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 214, in wait_for_status\n    resource = update_resource(resource)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 90, in _get_from_manager\n    fault=getattr(res, \"fault\", \"n/a\"))\nGetResourceErrorStatus: Resource <Server: s_rally_db5bab3f_Ite5jRRL> has ERROR status.\nFault: {u'message': u'Timed out waiting for a reply to message ID 4d0c584aed24430ca672fde482ea5a23', u'code': 500, u'created': u'2016-08-24T14:35:01Z'}\n", "iteration": 307}, {"type": "GetResourceErrorStatus", "message": "Resource <Server: s_rally_db5bab3f_aTnGxVw3> has ERROR status.\nFault: {u'message': u'Remote error: DBConnectionError (pymysql.err.OperationalError) (2013, \\'Lost connection to MySQL server during query\\')\\n[u\\'Traceback (most recent call last):\\\\n\\', u\\'  File \"/usr/lib/python2.7/site-packages/oslo_messaging/rpc/dispatcher.py\", line 138, in _dis', u'code': 500, u'created': u'2016-08-24T14:32:30Z'}", "traceback": "Traceback (most recent call last):\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/runner.py\", line 68, in _run_scenario_once\n    getattr(scenario_inst, method_name)(**scenario_kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/plugins/openstack/scenarios/nova/servers.py\", line 60, in boot_and_list_server\n    self._boot_server(image, flavor, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/atomic.py\", line 84, in func_atomic_actions\n    f = func(self, *args, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/plugins/openstack/scenarios/nova/utils.py\", line 148, in _boot_server\n    check_interval=CONF.benchmark.nova_server_boot_poll_interval\n  File \"/usr/local/lib/python2.7/dist-packages/rally/common/logging.py\", line 236, in wrapper\n    return f(*args, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 148, in wait_for\n    id_attr=id_attr)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 214, in wait_for_status\n    resource = update_resource(resource)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 90, in _get_from_manager\n    fault=getattr(res, \"fault\", \"n/a\"))\nGetResourceErrorStatus: Resource <Server: s_rally_db5bab3f_aTnGxVw3> has ERROR status.\nFault: {u'message': u'Remote error: DBConnectionError (pymysql.err.OperationalError) (2013, \\'Lost connection to MySQL server during query\\')\\n[u\\'Traceback (most recent call last):\\\\n\\', u\\'  File \"/usr/lib/python2.7/site-packages/oslo_messaging/rpc/dispatcher.py\", line 138, in _dis', u'code': 500, u'created': u'2016-08-24T14:32:30Z'}\n", "iteration": 314}, {"type": "GetResourceErrorStatus", "message": "Resource <Server: s_rally_db5bab3f_TN6KjufP> has ERROR status.\nFault: {u'message': u'Timed out waiting for a reply to message ID e5b629297e094ce2a817200b3f9452b3', u'code': 500, u'created': u'2016-08-24T14:35:12Z'}", "traceback": "Traceback (most recent call last):\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/runner.py\", line 68, in _run_scenario_once\n    getattr(scenario_inst, method_name)(**scenario_kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/plugins/openstack/scenarios/nova/servers.py\", line 60, in boot_and_list_server\n    self._boot_server(image, flavor, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/atomic.py\", line 84, in func_atomic_actions\n    f = func(self, *args, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/plugins/openstack/scenarios/nova/utils.py\", line 148, in _boot_server\n    check_interval=CONF.benchmark.nova_server_boot_poll_interval\n  File \"/usr/local/lib/python2.7/dist-packages/rally/common/logging.py\", line 236, in wrapper\n    return f(*args, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 148, in wait_for\n    id_attr=id_attr)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 214, in wait_for_status\n    resource = update_resource(resource)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 90, in _get_from_manager\n    fault=getattr(res, \"fault\", \"n/a\"))\nGetResourceErrorStatus: Resource <Server: s_rally_db5bab3f_TN6KjufP> has ERROR status.\nFault: {u'message': u'Timed out waiting for a reply to message ID e5b629297e094ce2a817200b3f9452b3', u'code': 500, u'created': u'2016-08-24T14:35:12Z'}\n", "iteration": 315}, {"type": "GetResourceErrorStatus", "message": "Resource <Server: s_rally_db5bab3f_Wy6X7tp8> has ERROR status.\nFault: {u'message': u'Timed out waiting for a reply to message ID 6c1b69c5092b4a93bdccd46a3b5b5354', u'code': 500, u'created': u'2016-08-24T14:35:13Z'}", "traceback": "Traceback (most recent call last):\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/runner.py\", line 68, in _run_scenario_once\n    getattr(scenario_inst, method_name)(**scenario_kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/plugins/openstack/scenarios/nova/servers.py\", line 60, in boot_and_list_server\n    self._boot_server(image, flavor, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/atomic.py\", line 84, in func_atomic_actions\n    f = func(self, *args, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/plugins/openstack/scenarios/nova/utils.py\", line 148, in _boot_server\n    check_interval=CONF.benchmark.nova_server_boot_poll_interval\n  File \"/usr/local/lib/python2.7/dist-packages/rally/common/logging.py\", line 236, in wrapper\n    return f(*args, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 148, in wait_for\n    id_attr=id_attr)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 214, in wait_for_status\n    resource = update_resource(resource)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 90, in _get_from_manager\n    fault=getattr(res, \"fault\", \"n/a\"))\nGetResourceErrorStatus: Resource <Server: s_rally_db5bab3f_Wy6X7tp8> has ERROR status.\nFault: {u'message': u'Timed out waiting for a reply to message ID 6c1b69c5092b4a93bdccd46a3b5b5354', u'code': 500, u'created': u'2016-08-24T14:35:13Z'}\n", "iteration": 316}, {"type": "GetResourceErrorStatus", "message": "Resource <Server: s_rally_db5bab3f_qxZXgVhw> has ERROR status.\nFault: {u'message': u'Timed out waiting for a reply to message ID 7e61adf9ca104127a2270c39182a971f', u'code': 500, u'created': u'2016-08-24T14:35:13Z'}", "traceback": "Traceback (most recent call last):\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/runner.py\", line 68, in _run_scenario_once\n    getattr(scenario_inst, method_name)(**scenario_kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/plugins/openstack/scenarios/nova/servers.py\", line 60, in boot_and_list_server\n    self._boot_server(image, flavor, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/atomic.py\", line 84, in func_atomic_actions\n    f = func(self, *args, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/plugins/openstack/scenarios/nova/utils.py\", line 148, in _boot_server\n    check_interval=CONF.benchmark.nova_server_boot_poll_interval\n  File \"/usr/local/lib/python2.7/dist-packages/rally/common/logging.py\", line 236, in wrapper\n    return f(*args, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 148, in wait_for\n    id_attr=id_attr)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 214, in wait_for_status\n    resource = update_resource(resource)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 90, in _get_from_manager\n    fault=getattr(res, \"fault\", \"n/a\"))\nGetResourceErrorStatus: Resource <Server: s_rally_db5bab3f_qxZXgVhw> has ERROR status.\nFault: {u'message': u'Timed out waiting for a reply to message ID 7e61adf9ca104127a2270c39182a971f', u'code': 500, u'created': u'2016-08-24T14:35:13Z'}\n", "iteration": 317}, {"type": "GetResourceErrorStatus", "message": "Resource <Server: s_rally_db5bab3f_cRE5YZZc> has ERROR status.\nFault: {u'message': u'Timed out waiting for a reply to message ID 7d150aa1e1714adbbfab7ee53f944265', u'code': 500, u'created': u'2016-08-24T14:35:15Z'}", "traceback": "Traceback (most recent call last):\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/runner.py\", line 68, in _run_scenario_once\n    getattr(scenario_inst, method_name)(**scenario_kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/plugins/openstack/scenarios/nova/servers.py\", line 60, in boot_and_list_server\n    self._boot_server(image, flavor, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/atomic.py\", line 84, in func_atomic_actions\n    f = func(self, *args, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/plugins/openstack/scenarios/nova/utils.py\", line 148, in _boot_server\n    check_interval=CONF.benchmark.nova_server_boot_poll_interval\n  File \"/usr/local/lib/python2.7/dist-packages/rally/common/logging.py\", line 236, in wrapper\n    return f(*args, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 148, in wait_for\n    id_attr=id_attr)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 214, in wait_for_status\n    resource = update_resource(resource)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 90, in _get_from_manager\n    fault=getattr(res, \"fault\", \"n/a\"))\nGetResourceErrorStatus: Resource <Server: s_rally_db5bab3f_cRE5YZZc> has ERROR status.\nFault: {u'message': u'Timed out waiting for a reply to message ID 7d150aa1e1714adbbfab7ee53f944265', u'code': 500, u'created': u'2016-08-24T14:35:15Z'}\n", "iteration": 319}, {"type": "GetResourceErrorStatus", "message": "Resource <Server: s_rally_db5bab3f_5AGNeZyF> has ERROR status.\nFault: {u'message': u'Timed out waiting for a reply to message ID 8722d4cf5c114fe0a20df5361ce31e0b', u'code': 500, u'created': u'2016-08-24T14:35:19Z'}", "traceback": "Traceback (most recent call last):\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/runner.py\", line 68, in _run_scenario_once\n    getattr(scenario_inst, method_name)(**scenario_kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/plugins/openstack/scenarios/nova/servers.py\", line 60, in boot_and_list_server\n    self._boot_server(image, flavor, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/atomic.py\", line 84, in func_atomic_actions\n    f = func(self, *args, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/plugins/openstack/scenarios/nova/utils.py\", line 148, in _boot_server\n    check_interval=CONF.benchmark.nova_server_boot_poll_interval\n  File \"/usr/local/lib/python2.7/dist-packages/rally/common/logging.py\", line 236, in wrapper\n    return f(*args, **kwargs)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 148, in wait_for\n    id_attr=id_attr)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 214, in wait_for_status\n    resource = update_resource(resource)\n  File \"/usr/local/lib/python2.7/dist-packages/rally/task/utils.py\", line 90, in _get_from_manager\n    fault=getattr(res, \"fault\", \"n/a\"))\nGetResourceErrorStatus: Resource <Server: s_rally_db5bab3f_5AGNeZyF> has ERROR status.\nFault: {u'message': u'Timed out waiting for a reply to message ID 8722d4cf5c114fe0a20df5361ce31e0b', u'code': 500, u'created': u'2016-08-24T14:35:19Z'}\n", "iteration": 323}], "name": "boot_and_list_server", "runner": "constant", "iterations_count": 383, "output_errors": [], "pos": "0", "load_duration": 751.8809020519257, "sla_success": false, "met": "boot_and_list_server", "atomic": {"pie": [["nova.list_servers", 0.22364581596135472], ["nova.boot_server", 94.06713078538681]], "iter": [["nova.list_servers", [[1, 0.17490482330322266], [2, 0.22554302215576172], [3, 0.17457795143127441], [4, 0.11643505096435547], [5, 0.11290979385375977], [6, 0.22026991844177246], [7, 0.11157608032226562], [8, 0.1360170841217041], [9, 0], [10, 0.1546640396118164], [11, 0.17589998245239258], [12, 0.15989184379577637], [13, 0.13207411766052246], [14, 0.1616218090057373], [15, 0.13005304336547852], [16, 0.19635581970214844], [17, 0.14987492561340332], [18, 0.2867310047149658], [19, 0.15166997909545898], [20, 0.22596287727355957], [21, 0.12009596824645996], [22, 0.16463398933410645], [23, 0.19526410102844238], [24, 0.18497419357299805], [25, 0.17236113548278809], [26, 0.15895891189575195], [27, 0.16879701614379883], [28, 0.17461109161376953], [29, 0.1641550064086914], [30, 0.16546106338500977], [31, 0.19132113456726074], [32, 0.17719388008117676], [33, 0.20457196235656738], [34, 0.25484800338745117], [35, 0.13922500610351562], [36, 0.3861231803894043], [37, 0.156325101852417], [38, 0.17246794700622559], [39, 0.23340702056884766], [40, 0.2105700969696045], [41, 0.1591799259185791], [42, 0.13232111930847168], [43, 0.14144396781921387], [44, 0.25771117210388184], [45, 0.15897798538208008], [46, 0.14238595962524414], [47, 0.15586400032043457], [48, 0.49613404273986816], [49, 0.4185330867767334], [50, 0.2917439937591553], [51, 0.21292996406555176], [52, 0.13421297073364258], [53, 0.1852560043334961], [54, 0.17206907272338867], [55, 0.16375184059143066], [56, 0.1882948875427246], [57, 0.19430208206176758], [58, 0.14615797996520996], [59, 0.15007495880126953], [60, 0.20760798454284668], [61, 0.3289480209350586], [62, 0.18314313888549805], [63, 0.19236397743225098], [64, 0.19164204597473145], [65, 0.19141888618469238], [66, 0.13509297370910645], [67, 0.21030521392822266], [68, 0.16452884674072266], [69, 0.20690393447875977], [70, 0.15928292274475098], [71, 0.24605417251586914], [72, 0.383897066116333], [73, 0.19571399688720703], [74, 0], [75, 0.16380000114440918], [76, 0.18234491348266602], [77, 0], [78, 0], [79, 0.3686990737915039], [80, 0.1329500675201416], [81, 0.14572811126708984], [82, 0.16484308242797852], [83, 0.2683548927307129], [84, 0.24271607398986816], [85, 0.2928640842437744], [86, 0.1694340705871582], [87, 0.23191618919372559], [88, 0.16162896156311035], [89, 0.1708080768585205], [90, 0.2752358913421631], [91, 0.23502898216247559], [92, 0.3290560245513916], [93, 0], [94, 0], [95, 0.7331969738006592], [96, 0], [97, 0], [98, 0], [99, 0], [100, 0], [101, 0.3199319839477539], [102, 0], [103, 0.19444608688354492], [104, 0.23717498779296875], [105, 0.28786396980285645], [106, 0.21975994110107422], [107, 0.21338915824890137], [108, 0.20875000953674316], [109, 0.20611906051635742], [110, 0.22033476829528809], [111, 0.3498539924621582], [112, 0.5755021572113037], [113, 0.1503589153289795], [114, 0.26723217964172363], [115, 0.15435481071472168], [116, 0.25704503059387207], [117, 0.14479899406433105], [118, 0.19130706787109375], [119, 0.12808609008789062], [120, 0.15320301055908203], [121, 0.4246089458465576], [122, 0.2202739715576172], [123, 0.20484495162963867], [124, 0.23948001861572266], [125, 0.1836550235748291], [126, 0.45232510566711426], [127, 0.20116114616394043], [128, 0.1259770393371582], [129, 0.2520790100097656], [130, 0.22930002212524414], [131, 0.1915891170501709], [132, 0.2476661205291748], [133, 0.17510604858398438], [134, 0], [135, 0.5269789695739746], [136, 0.13277196884155273], [137, 0.17603397369384766], [138, 0.1450951099395752], [139, 0.1549379825592041], [140, 0.35063791275024414], [141, 0.24631810188293457], [142, 0.1625690460205078], [143, 0.2386181354522705], [144, 0.2034010887145996], [145, 0.2321791648864746], [146, 0], [147, 0.22688794136047363], [148, 0.2560248374938965], [149, 0.5480380058288574], [150, 0.3387470245361328], [151, 0.22603917121887207], [152, 0.22945404052734375], [153, 0.20482516288757324], [154, 0.1867990493774414], [155, 0.2797369956970215], [156, 0], [157, 0.30611205101013184], [158, 0.21707487106323242], [159, 0.2203059196472168], [160, 0.23088598251342773], [161, 0.22866606712341309], [162, 0.24690508842468262], [163, 0.3961520195007324], [164, 0.1548769474029541], [165, 0.36335301399230957], [166, 0.26012396812438965], [167, 0.5011570453643799], [168, 0.36635899543762207], [169, 0.21237897872924805], [170, 0.2338249683380127], [171, 0.1701948642730713], [172, 0], [173, 0], [174, 0.28665590286254883], [175, 0.23627495765686035], [176, 0.2293691635131836], [177, 0.18161296844482422], [178, 0.3100919723510742], [179, 0.1521909236907959], [180, 0], [181, 0], [182, 0.2036449909210205], [183, 0.5228590965270996], [184, 0.3832869529724121], [185, 0.24443697929382324], [186, 0.43862390518188477], [187, 0.26405906677246094], [188, 0.22345995903015137], [189, 0.1707150936126709], [190, 0.5889699459075928], [191, 0.1571199893951416], [192, 0.17695903778076172], [193, 0.32946205139160156], [194, 0.2021481990814209], [195, 0.3088099956512451], [196, 0.19290494918823242], [197, 0.2543489933013916], [198, 0.2934448719024658], [199, 0.3537580966949463], [200, 0.27365994453430176], [201, 0.30852389335632324], [202, 0.2921159267425537], [203, 0.16153287887573242], [204, 0.335860013961792], [205, 0.3643009662628174], [206, 0.2019650936126709], [207, 0.19899415969848633], [208, 0.20226597785949707], [209, 0.24558091163635254], [210, 0.2230539321899414], [211, 0.29326677322387695], [212, 0.3738079071044922], [213, 0.2533421516418457], [214, 0.22723698616027832], [215, 0], [216, 0.2223069667816162], [217, 0.2514948844909668], [218, 0.1790628433227539], [219, 0.22821807861328125], [220, 0.32756710052490234], [221, 0], [222, 0], [223, 0], [224, 0.22275114059448242], [225, 0.23122406005859375], [226, 0.23959803581237793], [227, 0.14243197441101074], [228, 0.23482608795166016], [229, 0.18401193618774414], [230, 0.7639870643615723], [231, 0.23245787620544434], [232, 0.34282612800598145], [233, 0], [234, 0.15434694290161133], [235, 0.1977078914642334], [236, 0.46227407455444336], [237, 0], [238, 0.1787259578704834], [239, 0.18290996551513672], [240, 0.19310998916625977], [241, 0.26040196418762207], [242, 0.15808582305908203], [243, 0.17397499084472656], [244, 0.23931097984313965], [245, 0.25679993629455566], [246, 0.6760737895965576], [247, 0.3002588748931885], [248, 0.2438368797302246], [249, 0.22688603401184082], [250, 0.2085878849029541], [251, 0.36498188972473145], [252, 0.4309079647064209], [253, 0.2345578670501709], [254, 0.28878211975097656], [255, 0.24839401245117188], [256, 0.2041029930114746], [257, 0.22547507286071777], [258, 0.17444992065429688], [259, 0.26723313331604004], [260, 0.18303394317626953], [261, 0.20430397987365723], [262, 0.2866380214691162], [263, 0.19142508506774902], [264, 0.25398707389831543], [265, 0.19869112968444824], [266, 0.2847130298614502], [267, 0.2857351303100586], [268, 0.4334530830383301], [269, 0.2095949649810791], [270, 0.18624019622802734], [271, 0.3100559711456299], [272, 0.2642500400543213], [273, 0.6462051868438721], [274, 0.23611903190612793], [275, 0], [276, 0], [277, 0], [278, 0.17730283737182617], [279, 0], [280, 0], [281, 0.2182149887084961], [282, 0.6056511402130127], [283, 0.2308211326599121], [284, 0.21360993385314941], [285, 0.18779397010803223], [286, 0.24153494834899902], [287, 0.47722601890563965], [288, 0.23035192489624023], [289, 0.2632579803466797], [290, 0.24457311630249023], [291, 0.27547621726989746], [292, 0.23755502700805664], [293, 0.17755699157714844], [294, 0.38080501556396484], [295, 0.22173213958740234], [296, 0.22466707229614258], [297, 0], [298, 0.3447608947753906], [299, 0.23276710510253906], [300, 0.34148311614990234], [301, 0.33448290824890137], [302, 0.25266408920288086], [303, 0.29143190383911133], [304, 0.22597098350524902], [305, 0.23421907424926758], [306, 0.25591206550598145], [307, 0], [308, 0.22516894340515137], [309, 0.25519800186157227], [310, 0.33140087127685547], [311, 0.33957505226135254], [312, 0.22043204307556152], [313, 0.2068488597869873], [314, 0], [315, 0], [316, 0], [317, 0], [318, 0.23824095726013184], [319, 0], [320, 0.22955703735351562], [321, 0.3221700191497803], [322, 0.21308493614196777], [323, 0], [324, 0.3704030513763428], [325, 0.30036306381225586], [326, 0.4879300594329834], [327, 0.34068989753723145], [328, 0.29783010482788086], [329, 0.6967720985412598], [330, 0.20932722091674805], [331, 0.24047303199768066], [332, 0.2347571849822998], [333, 0.3030219078063965], [334, 0.1710681915283203], [335, 0.2297530174255371], [336, 0.2760438919067383], [337, 0.23802781105041504], [338, 0.26204490661621094], [339, 0.4627950191497803], [340, 0.18776798248291016], [341, 0.3026919364929199], [342, 0.5019159317016602], [343, 0.1994020938873291], [344, 0.17433595657348633], [345, 0.17966413497924805], [346, 0.2041609287261963], [347, 0.20545482635498047], [348, 0.2136249542236328], [349, 0.21685504913330078], [350, 0.36884093284606934], [351, 0.4969449043273926], [352, 0.20028209686279297], [353, 0.2405238151550293], [354, 0.20972704887390137], [355, 0.21685004234313965], [356, 0.35456299781799316], [357, 0.26560497283935547], [358, 0.29596781730651855], [359, 0.20546197891235352], [360, 0.22976994514465332], [361, 0.3299250602722168], [362, 0.3823518753051758], [363, 0.20212006568908691], [364, 0.23428988456726074], [365, 0.30875182151794434], [366, 0.15425395965576172], [367, 0.21043705940246582], [368, 0.31618309020996094], [369, 0.1387190818786621], [370, 0.21445417404174805], [371, 0.15134501457214355], [372, 0.22195792198181152], [373, 0.18606996536254883], [374, 0.24923491477966309], [375, 0.19565796852111816], [376, 0.20566797256469727], [377, 0.2276761531829834], [378, 0.1812000274658203], [379, 0.22047901153564453], [380, 0.21976900100708008], [381, 0.23038387298583984], [382, 0.1690051555633545], [383, 0.25980591773986816]]], ["nova.boot_server", [[1, 52.44157409667969], [2, 10.260380983352661], [3, 13.623684167861938], [4, 23.50765585899353], [5, 12.497231006622314], [6, 26.01570200920105], [7, 7.919198989868164], [8, 11.698403120040894], [9, 188.44190120697021], [10, 18.99843716621399], [11, 55.44783902168274], [12, 19.094713926315308], [13, 44.169337034225464], [14, 26.328212022781372], [15, 55.76942992210388], [16, 27.57841205596924], [17, 46.741827964782715], [18, 45.01039505004883], [19, 29.21720314025879], [20, 38.15736103057861], [21, 22.35958504676819], [22, 39.41084003448486], [23, 45.89860486984253], [24, 59.94494390487671], [25, 51.78402805328369], [26, 25.020530939102173], [27, 65.2639410495758], [28, 68.34332704544067], [29, 27.945677042007446], [30, 21.48228406906128], [31, 53.12826585769653], [32, 49.20076608657837], [33, 62.542113065719604], [34, 54.265355825424194], [35, 20.843955993652344], [36, 52.83040499687195], [37, 69.61936902999878], [38, 42.046382904052734], [39, 66.63135409355164], [40, 49.62512493133545], [41, 47.01097011566162], [42, 42.29003596305847], [43, 67.33623695373535], [44, 63.854326009750366], [45, 43.85626697540283], [46, 69.03041505813599], [47, 47.865607023239136], [48, 37.66610383987427], [49, 39.95997405052185], [50, 40.54798197746277], [51, 41.81001901626587], [52, 52.123661041259766], [53, 50.99803614616394], [54, 57.499759912490845], [55, 49.60952806472778], [56, 54.85945105552673], [57, 54.87889814376831], [58, 55.07899308204651], [59, 53.81011486053467], [60, 49.37615180015564], [61, 48.34693098068237], [62, 48.911179065704346], [63, 55.72462606430054], [64, 54.1607940196991], [65, 51.23307394981384], [66, 56.22322106361389], [67, 112.63107705116272], [68, 179.13245010375977], [69, 55.70341610908508], [70, 52.11132502555847], [71, 52.2696328163147], [72, 53.12542104721069], [73, 49.33256793022156], [74, 181.99470686912537], [75, 166.4777901172638], [76, 122.82175302505493], [77, 182.3429560661316], [78, 181.39445996284485], [79, 164.9614360332489], [80, 122.41530179977417], [81, 118.65479516983032], [82, 63.022616147994995], [83, 182.0304958820343], [84, 62.1987669467926], [85, 180.87855911254883], [86, 166.109069108963], [87, 57.846970081329346], [88, 58.635584115982056], [89, 119.24185085296631], [90, 55.90328788757324], [91, 176.32039189338684], [92, 114.64813303947449], [93, 182.06667399406433], [94, 182.17691111564636], [95, 107.04317998886108], [96, 181.47109413146973], [97, 181.73175716400146], [98, 182.05338501930237], [99, 181.65924191474915], [100, 182.26813316345215], [101, 104.33661699295044], [102, 181.49350500106812], [103, 120.78701305389404], [104, 122.45679807662964], [105, 121.29212999343872], [106, 121.08712005615234], [107, 63.2104229927063], [108, 118.98134899139404], [109, 119.63708710670471], [110, 117.9687910079956], [111, 117.49945402145386], [112, 114.92786908149719], [113, 62.242948055267334], [114, 108.21953105926514], [115, 52.98364281654358], [116, 107.3405430316925], [117, 57.30859088897705], [118, 52.66487193107605], [119, 105.51250314712524], [120, 55.866610050201416], [121, 120.43998193740845], [122, 120.20418381690979], [123, 108.05980014801025], [124, 59.300354957580566], [125, 112.7999758720398], [126, 56.50991082191467], [127, 55.71398305892944], [128, 46.73369789123535], [129, 53.03711199760437], [130, 42.234983921051025], [131, 47.6439528465271], [132, 44.79574418067932], [133, 54.173399925231934], [134, 181.30529284477234], [135, 62.26701593399048], [136, 37.84071898460388], [137, 37.86684989929199], [138, 48.95916795730591], [139, 56.87409996986389], [140, 56.55590009689331], [141, 116.01770401000977], [142, 117.16824316978455], [143, 114.0660469532013], [144, 180.83633017539978], [145, 113.47552704811096], [146, 182.17334413528442], [147, 174.16562390327454], [148, 172.47309494018555], [149, 159.29028487205505], [150, 164.6642508506775], [151, 163.57721209526062], [152, 172.7936761379242], [153, 173.70738196372986], [154, 175.83806586265564], [155, 163.0345859527588], [156, 183.12344098091125], [157, 169.06486296653748], [158, 63.66541790962219], [159, 61.13078498840332], [160, 172.14776396751404], [161, 53.727335929870605], [162, 50.90730619430542], [163, 50.99089694023132], [164, 49.212414026260376], [165, 116.09213781356812], [166, 115.07122921943665], [167, 112.51658511161804], [168, 110.66973996162415], [169, 115.97435092926025], [170, 109.67730593681335], [171, 109.9092800617218], [172, 182.20976305007935], [173, 182.61663007736206], [174, 119.42284488677979], [175, 117.93675303459167], [176, 176.32980608940125], [177, 172.05879092216492], [178, 119.8408088684082], [179, 118.61513805389404], [180, 181.74559617042542], [181, 181.36669993400574], [182, 60.34060502052307], [183, 59.6834499835968], [184, 60.03836703300476], [185, 59.11626100540161], [186, 57.046043157577515], [187, 54.90330791473389], [188, 56.1533100605011], [189, 54.38239002227783], [190, 94.86171293258667], [191, 112.0642659664154], [192, 111.82554197311401], [193, 120.8318190574646], [194, 104.39249300956726], [195, 106.27517509460449], [196, 177.33046102523804], [197, 49.534908056259155], [198, 58.38109803199768], [199, 60.92877388000488], [200, 49.629372119903564], [201, 54.026050090789795], [202, 49.136857986450195], [203, 96.83134818077087], [204, 54.66419816017151], [205, 57.05063605308533], [206, 56.12484884262085], [207, 54.490520000457764], [208, 54.307283878326416], [209, 53.487924098968506], [210, 52.65328812599182], [211, 50.581825971603394], [212, 49.34871196746826], [213, 48.20369505882263], [214, 55.288301944732666], [215, 182.34320211410522], [216, 60.27500605583191], [217, 57.640089988708496], [218, 57.931785106658936], [219, 50.44424891471863], [220, 58.79437303543091], [221, 182.38081812858582], [222, 181.20811891555786], [223, 182.740797996521], [224, 63.26222109794617], [225, 54.02968907356262], [226, 56.84997916221619], [227, 51.66641902923584], [228, 57.509624004364014], [229, 48.76035690307617], [230, 46.40727710723877], [231, 57.8650279045105], [232, 61.61695694923401], [233, 182.40533304214478], [234, 55.67093205451965], [235, 47.72444701194763], [236, 44.828985929489136], [237, 182.5255651473999], [238, 40.72098398208618], [239, 56.17475891113281], [240, 180.93901801109314], [241, 48.36950898170471], [242, 59.41668391227722], [243, 43.793641090393066], [244, 44.88766098022461], [245, 173.7643609046936], [246, 169.81137895584106], [247, 59.281102895736694], [248, 62.522573947906494], [249, 58.05904293060303], [250, 62.0787148475647], [251, 55.7867648601532], [252, 57.90484309196472], [253, 61.944719076156616], [254, 60.232516050338745], [255, 57.94721603393555], [256, 60.90695118904114], [257, 175.8412480354309], [258, 119.65921711921692], [259, 167.339359998703], [260, 118.55390810966492], [261, 120.31167197227478], [262, 180.37544298171997], [263, 115.02468180656433], [264, 169.9376950263977], [265, 164.5929718017578], [266, 175.21861290931702], [267, 175.99639081954956], [268, 171.41248083114624], [269, 177.0724310874939], [270, 179.1247000694275], [271, 173.16689109802246], [272, 170.9146010875702], [273, 173.68617486953735], [274, 175.96364188194275], [275, 182.78566002845764], [276, 181.2376310825348], [277, 181.1370599269867], [278, 60.95734715461731], [279, 181.28732705116272], [280, 181.81712198257446], [281, 62.65820813179016], [282, 59.082594871520996], [283, 181.20546007156372], [284, 57.46190118789673], [285, 181.01443600654602], [286, 119.09304094314575], [287, 108.3311779499054], [288, 107.36204218864441], [289, 104.32788610458374], [290, 108.67381811141968], [291, 107.33099484443665], [292, 106.998605966568], [293, 107.15504789352417], [294, 115.27089500427246], [295, 105.76513004302979], [296, 121.32648301124573], [297, 182.03244400024414], [298, 180.381982088089], [299, 117.91208600997925], [300, 116.11857008934021], [301, 120.52611303329468], [302, 52.415071964263916], [303, 49.508224964141846], [304, 52.13815188407898], [305, 51.87090802192688], [306, 56.707016944885254], [307, 182.62806010246277], [308, 121.87250304222107], [309, 115.83395099639893], [310, 57.56858015060425], [311, 64.1636049747467], [312, 112.15634894371033], [313, 118.34587907791138], [314, 20.187124013900757], [315, 182.16640996932983], [316, 182.09725999832153], [317, 181.5797040462494], [318, 185.09565496444702], [319, 182.15354418754578], [320, 183.20523715019226], [321, 122.62162613868713], [322, 120.22819805145264], [323, 181.51766300201416], [324, 177.034686088562], [325, 174.66765594482422], [326, 58.68094515800476], [327, 54.77587699890137], [328, 57.85243201255798], [329, 55.77654314041138], [330, 55.86484909057617], [331, 62.12476205825806], [332, 114.69148206710815], [333, 59.51401901245117], [334, 118.1236469745636], [335, 55.8197820186615], [336, 55.07585906982422], [337, 155.04214811325073], [338, 58.622745990753174], [339, 54.541507959365845], [340, 49.456904888153076], [341, 53.15618300437927], [342, 121.19615912437439], [343, 158.64646887779236], [344, 157.94729614257812], [345, 157.78011989593506], [346, 153.5258870124817], [347, 60.10153412818909], [348, 154.0092921257019], [349, 63.594918966293335], [350, 56.16985106468201], [351, 56.245620012283325], [352, 123.25112509727478], [353, 57.21129584312439], [354, 58.460386991500854], [355, 58.85748887062073], [356, 49.81577801704407], [357, 142.34793901443481], [358, 56.590627908706665], [359, 102.48379802703857], [360, 56.05179214477539], [361, 62.058212995529175], [362, 61.01673197746277], [363, 61.31269812583923], [364, 53.404953956604004], [365, 51.630206823349], [366, 50.839537143707275], [367, 54.10834288597107], [368, 54.367987871170044], [369, 47.59466600418091], [370, 103.54518008232117], [371, 71.69110703468323], [372, 95.41144800186157], [373, 94.67125701904297], [374, 94.56263995170593], [375, 69.39266085624695], [376, 93.5867760181427], [377, 92.6039788722992], [378, 91.62069201469421], [379, 88.85917520523071], [380, 63.9481360912323], [381, 62.33249092102051], [382, 63.18658900260925], [383, 61.7318811416626]]], ["failed_duration", [[1, 0], [2, 0], [3, 0], [4, 0], [5, 0], [6, 0], [7, 0], [8, 0], [9, 0.0002548694610595703], [10, 0], [11, 0], [12, 0], [13, 0], [14, 0], [15, 0], [16, 0], [17, 0], [18, 0], [19, 0], [20, 0], [21, 0], [22, 0], [23, 0], [24, 0], [25, 0], [26, 0], [27, 0], [28, 0], [29, 0], [30, 0], [31, 0], [32, 0], [33, 0], [34, 0], [35, 0], [36, 0], [37, 0], [38, 0], [39, 0], [40, 0], [41, 0], [42, 0], [43, 0], [44, 0], [45, 0], [46, 0], [47, 0], [48, 0], [49, 0], [50, 0], [51, 0], [52, 0], [53, 0], [54, 0], [55, 0], [56, 0], [57, 0], [58, 0], [59, 0], [60, 0], [61, 0], [62, 0], [63, 0], [64, 0], [65, 0], [66, 0], [67, 0], [68, 0], [69, 0], [70, 0], [71, 0], [72, 0], [73, 0], [74, 9.918212890625e-05], [75, 0], [76, 0], [77, 0.0001399517059326172], [78, 0.00015497207641601562], [79, 0], [80, 0], [81, 0], [82, 0], [83, 0], [84, 0], [85, 0], [86, 0], [87, 0], [88, 0], [89, 0], [90, 0], [91, 0], [92, 0], [93, 0.00013899803161621094], [94, 0.00017380714416503906], [95, 0], [96, 8.082389831542969e-05], [97, 0.00010895729064941406], [98, 0.00010800361633300781], [99, 9.012222290039062e-05], [100, 0.000102996826171875], [101, 0], [102, 0.0001239776611328125], [103, 0], [104, 0], [105, 0], [106, 0], [107, 0], [108, 0], [109, 0], [110, 0], [111, 0], [112, 0], [113, 0], [114, 0], [115, 0], [116, 0], [117, 0], [118, 0], [119, 0], [120, 0], [121, 0], [122, 0], [123, 0], [124, 0], [125, 0], [126, 0], [127, 0], [128, 0], [129, 0], [130, 0], [131, 0], [132, 0], [133, 0], [134, 0.00010919570922851562], [135, 0], [136, 0], [137, 0], [138, 0], [139, 0], [140, 0], [141, 0], [142, 0], [143, 0], [144, 0], [145, 0], [146, 0.00010991096496582031], [147, 0], [148, 0], [149, 0], [150, 0], [151, 0], [152, 0], [153, 0], [154, 0], [155, 0], [156, 0.00010514259338378906], [157, 0], [158, 0], [159, 0], [160, 0], [161, 0], [162, 0], [163, 0], [164, 0], [165, 0], [166, 0], [167, 0], [168, 0], [169, 0], [170, 0], [171, 0], [172, 8.20159912109375e-05], [173, 0.00010395050048828125], [174, 0], [175, 0], [176, 0], [177, 0], [178, 0], [179, 0], [180, 6.4849853515625e-05], [181, 6.818771362304688e-05], [182, 0], [183, 0], [184, 0], [185, 0], [186, 0], [187, 0], [188, 0], [189, 0], [190, 0], [191, 0], [192, 0], [193, 0], [194, 0], [195, 0], [196, 0], [197, 0], [198, 0], [199, 0], [200, 0], [201, 0], [202, 0], [203, 0], [204, 0], [205, 0], [206, 0], [207, 0], [208, 0], [209, 0], [210, 0], [211, 0], [212, 0], [213, 0], [214, 0], [215, 7.104873657226562e-05], [216, 0], [217, 0], [218, 0], [219, 0], [220, 0], [221, 8.58306884765625e-05], [222, 0.00010704994201660156], [223, 0.00014591217041015625], [224, 0], [225, 0], [226, 0], [227, 0], [228, 0], [229, 0], [230, 0], [231, 0], [232, 0], [233, 7.009506225585938e-05], [234, 0], [235, 0], [236, 0], [237, 0.0001609325408935547], [238, 0], [239, 0], [240, 0], [241, 0], [242, 0], [243, 0], [244, 0], [245, 0], [246, 0], [247, 0], [248, 0], [249, 0], [250, 0], [251, 0], [252, 0], [253, 0], [254, 0], [255, 0], [256, 0], [257, 0], [258, 0], [259, 0], [260, 0], [261, 0], [262, 0], [263, 0], [264, 0], [265, 0], [266, 0], [267, 0], [268, 0], [269, 0], [270, 0], [271, 0], [272, 0], [273, 0], [274, 0], [275, 0.00010514259338378906], [276, 0.00011706352233886719], [277, 6.198883056640625e-05], [278, 0], [279, 5.2928924560546875e-05], [280, 5.4836273193359375e-05], [281, 0], [282, 0], [283, 0], [284, 0], [285, 0], [286, 0], [287, 0], [288, 0], [289, 0], [290, 0], [291, 0], [292, 0], [293, 0], [294, 0], [295, 0], [296, 0], [297, 0.00010013580322265625], [298, 0], [299, 0], [300, 0], [301, 0], [302, 0], [303, 0], [304, 0], [305, 0], [306, 0], [307, 0.00011801719665527344], [308, 0], [309, 0], [310, 0], [311, 0], [312, 0], [313, 0], [314, 0.00015091896057128906], [315, 6.699562072753906e-05], [316, 8.296966552734375e-05], [317, 9.107589721679688e-05], [318, 0], [319, 6.079673767089844e-05], [320, 0], [321, 0], [322, 0], [323, 0.00011992454528808594], [324, 0], [325, 0], [326, 0], [327, 0], [328, 0], [329, 0], [330, 0], [331, 0], [332, 0], [333, 0], [334, 0], [335, 0], [336, 0], [337, 0], [338, 0], [339, 0], [340, 0], [341, 0], [342, 0], [343, 0], [344, 0], [345, 0], [346, 0], [347, 0], [348, 0], [349, 0], [350, 0], [351, 0], [352, 0], [353, 0], [354, 0], [355, 0], [356, 0], [357, 0], [358, 0], [359, 0], [360, 0], [361, 0], [362, 0], [363, 0], [364, 0], [365, 0], [366, 0], [367, 0], [368, 0], [369, 0], [370, 0], [371, 0], [372, 0], [373, 0], [374, 0], [375, 0], [376, 0], [377, 0], [378, 0], [379, 0], [380, 0], [381, 0], [382, 0], [383, 0]]]], "histogram": {"data": [[{"disabled": 0, "values": [{"y": 57, "x": 0.14419662952423096}, {"y": 56, "x": 0.1768171787261963}, {"y": 66, "x": 0.20943772792816162}, {"y": 79, "x": 0.24205827713012695}, {"y": 36, "x": 0.2746788263320923}, {"y": 24, "x": 0.3072993755340576}, {"y": 18, "x": 0.33991992473602295}, {"y": 15, "x": 0.3725404739379883}, {"y": 7, "x": 0.4051610231399536}, {"y": 4, "x": 0.43778157234191895}, {"y": 4, "x": 0.4704021215438843}, {"y": 6, "x": 0.5030226707458496}, {"y": 2, "x": 0.5356432199478149}, {"y": 1, "x": 0.5682637691497803}, {"y": 2, "x": 0.6008843183517456}, {"y": 1, "x": 0.6335048675537109}, {"y": 1, "x": 0.6661254167556763}, {"y": 2, "x": 0.6987459659576416}, {"y": 0, "x": 0.7313665151596069}, {"y": 2, "x": 0.7639870643615723}], "key": "nova.list_servers", "view": "Square Root Choice"}, {"disabled": 1, "values": [{"y": 5, "x": 16.945334100723265}, {"y": 8, "x": 25.97146921157837}, {"y": 5, "x": 34.997604322433475}, {"y": 14, "x": 44.023739433288576}, {"y": 55, "x": 53.04987454414368}, {"y": 97, "x": 62.076009654998785}, {"y": 25, "x": 71.1021447658539}, {"y": 1, "x": 80.12827987670899}, {"y": 1, "x": 89.1544149875641}, {"y": 8, "x": 98.18055009841919}, {"y": 11, "x": 107.2066852092743}, {"y": 29, "x": 116.2328203201294}, {"y": 34, "x": 125.2589554309845}, {"y": 0, "x": 134.28509054183962}, {"y": 1, "x": 143.3112256526947}, {"y": 0, "x": 152.3373607635498}, {"y": 7, "x": 161.36349587440492}, {"y": 11, "x": 170.38963098526003}, {"y": 24, "x": 179.4157660961151}, {"y": 47, "x": 188.44190120697021}], "key": "nova.boot_server", "view": "Square Root Choice"}], [{"disabled": 0, "values": [{"y": 113, "x": 0.1768171787261963}, {"y": 145, "x": 0.24205827713012695}, {"y": 60, "x": 0.3072993755340576}, {"y": 33, "x": 0.3725404739379883}, {"y": 11, "x": 0.43778157234191895}, {"y": 10, "x": 0.5030226707458496}, {"y": 3, "x": 0.5682637691497803}, {"y": 3, "x": 0.6335048675537109}, {"y": 3, "x": 0.6987459659576416}, {"y": 2, "x": 0.7639870643615723}], "key": "nova.list_servers", "view": "Sturges Formula"}, {"disabled": 1, "values": [{"y": 13, "x": 25.97146921157837}, {"y": 19, "x": 44.023739433288576}, {"y": 152, "x": 62.076009654998785}, {"y": 26, "x": 80.12827987670899}, {"y": 9, "x": 98.18055009841919}, {"y": 40, "x": 116.2328203201294}, {"y": 34, "x": 134.28509054183962}, {"y": 1, "x": 152.3373607635498}, {"y": 18, "x": 170.38963098526003}, {"y": 71, "x": 188.44190120697021}], "key": "nova.boot_server", "view": "Sturges Formula"}], [{"disabled": 0, "values": [{"y": 74, "x": 0.15507014592488608}, {"y": 78, "x": 0.19856421152750653}, {"y": 106, "x": 0.24205827713012695}, {"y": 41, "x": 0.28555234273274743}, {"y": 29, "x": 0.32904640833536786}, {"y": 23, "x": 0.3725404739379883}, {"y": 7, "x": 0.41603453954060876}, {"y": 6, "x": 0.4595286051432292}, {"y": 8, "x": 0.5030226707458496}, {"y": 2, "x": 0.5465167363484701}, {"y": 3, "x": 0.5900108019510906}, {"y": 1, "x": 0.6335048675537109}, {"y": 2, "x": 0.6769989331563314}, {"y": 1, "x": 0.7204929987589519}, {"y": 2, "x": 0.7639870643615723}], "key": "nova.list_servers", "view": "Rice Rule"}, {"disabled": 1, "values": [{"y": 7, "x": 19.954045804341632}, {"y": 11, "x": 31.988892618815104}, {"y": 14, "x": 44.023739433288576}, {"y": 94, "x": 56.058586247762044}, {"y": 79, "x": 68.0934330622355}, {"y": 5, "x": 80.12827987670899}, {"y": 2, "x": 92.16312669118246}, {"y": 9, "x": 104.19797350565592}, {"y": 38, "x": 116.23282032012939}, {"y": 34, "x": 128.26766713460285}, {"y": 0, "x": 140.30251394907634}, {"y": 1, "x": 152.3373607635498}, {"y": 9, "x": 164.37220757802328}, {"y": 28, "x": 176.40705439249675}, {"y": 52, "x": 188.44190120697021}], "key": "nova.boot_server", "view": "Rice Rule"}]], "views": [{"id": 0, "name": "Square Root Choice"}, {"id": 1, "name": "Sturges Formula"}, {"id": 2, "name": "Rice Rule"}]}}, "iterations": {"pie": [["success", 345], ["errors", 38]], "iter": [["duration", [[1, 52.61675190925598], [2, 10.4861478805542], [3, 13.798521995544434], [4, 23.624287128448486], [5, 12.610338926315308], [6, 26.236100912094116], [7, 8.03088092803955], [8, 11.834534168243408], [9, 0], [10, 19.153276920318604], [11, 55.62412881851196], [12, 19.25471806526184], [13, 44.301780223846436], [14, 26.489943027496338], [15, 55.89970803260803], [16, 27.774892807006836], [17, 46.89189100265503], [18, 45.29745101928711], [19, 29.369091987609863], [20, 38.38377785682678], [21, 22.479914903640747], [22, 39.57577180862427], [23, 46.110310077667236], [24, 60.130066871643066], [25, 51.95669484138489], [26, 25.179621934890747], [27, 65.43301701545715], [28, 68.51813006401062], [29, 28.10994815826416], [30, 21.647860050201416], [31, 53.31974506378174], [32, 49.37825298309326], [33, 62.74689984321594], [34, 54.52036190032959], [35, 20.983318090438843], [36, 53.216814041137695], [37, 69.77595090866089], [38, 42.21907901763916], [39, 66.86499500274658], [40, 49.835973024368286], [41, 47.17035388946533], [42, 42.42264986038208], [43, 67.47788500785828], [44, 64.11221718788147], [45, 44.01542592048645], [46, 69.17302799224854], [47, 48.021809101104736], [48, 38.16249108314514], [49, 40.37881112098694], [50, 40.84006214141846], [51, 42.02313709259033], [52, 52.2580680847168], [53, 51.18342399597168], [54, 57.67199516296387], [55, 49.7734100818634], [56, 55.047910928726196], [57, 55.07338500022888], [58, 55.22540593147278], [59, 53.96038508415222], [60, 49.58399200439453], [61, 48.676154136657715], [62, 49.09454107284546], [63, 55.91713500022888], [64, 54.35262393951416], [65, 51.42471194267273], [66, 56.35850405693054], [67, 112.84161400794983], [68, 179.2972230911255], [69, 55.91059708595276], [70, 52.27076292037964], [71, 52.51593613624573], [72, 53.509546995162964], [73, 49.52848792076111], [74, 0], [75, 166.64172792434692], [76, 123.00435400009155], [77, 0], [78, 0], [79, 165.33036994934082], [80, 122.54845809936523], [81, 118.80081796646118], [82, 63.18769598007202], [83, 182.29904794692993], [84, 62.44161891937256], [85, 181.17166185379028], [86, 166.27870988845825], [87, 58.079078912734985], [88, 58.797504901885986], [89, 119.41287112236023], [90, 56.17871904373169], [91, 176.5556240081787], [92, 114.97742295265198], [93, 0], [94, 0], [95, 107.77658796310425], [96, 0], [97, 0], [98, 0], [99, 0], [100, 0], [101, 104.65674996376038], [102, 0], [103, 120.98175191879272], [104, 122.69420194625854], [105, 121.580148935318], [106, 121.30714702606201], [107, 63.42397689819336], [108, 119.19032597541809], [109, 119.8433849811554], [110, 118.18928503990173], [111, 117.84949398040771], [112, 115.50357294082642], [113, 62.39352583885193], [114, 108.48702001571655], [115, 53.13822102546692], [116, 107.59774708747864], [117, 57.45361804962158], [118, 52.85641002655029], [119, 105.64073204994202], [120, 56.020063161849976], [121, 120.86480188369751], [122, 120.4247350692749], [123, 108.26490998268127], [124, 59.54006791114807], [125, 112.98384213447571], [126, 56.96245622634888], [127, 55.915316104888916], [128, 46.859946966171265], [129, 53.28937005996704], [130, 42.46442794799805], [131, 47.83571004867554], [132, 45.04363512992859], [133, 54.3487491607666], [134, 0], [135, 62.79420804977417], [136, 37.973679065704346], [137, 38.04315686225891], [138, 49.104398012161255], [139, 57.02925896644592], [140, 56.90678405761719], [141, 116.26423192024231], [142, 117.33110404014587], [143, 114.30491900444031], [144, 181.03991198539734], [145, 113.70791602134705], [146, 0], [147, 174.39270114898682], [148, 172.72944498062134], [149, 159.83859491348267], [150, 165.00329995155334], [151, 163.80349898338318], [152, 173.02336311340332], [153, 173.9124140739441], [154, 176.0250380039215], [155, 163.31459188461304], [156, 0], [157, 169.371178150177], [158, 63.88266181945801], [159, 61.351314067840576], [160, 172.37888717651367], [161, 53.95618414878845], [162, 51.15448617935181], [163, 51.38729500770569], [164, 49.3675000667572], [165, 116.45573496818542], [166, 115.33158683776855], [167, 113.01809191703796], [168, 111.03635811805725], [169, 116.18692278862], [170, 109.91143083572388], [171, 110.07971787452698], [172, 0], [173, 0], [174, 119.70973682403564], [175, 118.17324113845825], [176, 176.55940794944763], [177, 172.24061703681946], [178, 120.15115714073181], [179, 118.76748204231262], [180, 0], [181, 0], [182, 60.54446291923523], [183, 60.206565856933594], [184, 60.42190194129944], [185, 59.36087203025818], [186, 57.48481798171997], [187, 55.16755795478821], [188, 56.376996994018555], [189, 54.55332398414612], [190, 95.45080614089966], [191, 112.22154498100281], [192, 112.0027961730957], [193, 121.16143584251404], [194, 104.59485292434692], [195, 106.58414602279663], [196, 177.5236098766327], [197, 49.78943204879761], [198, 58.67473793029785], [199, 61.282745122909546], [200, 49.90323495864868], [201, 54.3347589969635], [202, 49.42919111251831], [203, 96.99311900138855], [204, 55.00022506713867], [205, 57.41515517234802], [206, 56.32709503173828], [207, 54.69698691368103], [208, 54.50980496406555], [209, 53.73377799987793], [210, 52.87665605545044], [211, 50.87532305717468], [212, 49.722764015197754], [213, 48.45730900764465], [214, 55.515809059143066], [215, 0], [216, 60.49749207496643], [217, 57.89182806015015], [218, 58.1110520362854], [219, 50.67268490791321], [220, 59.12217903137207], [221, 0], [222, 0], [223, 0], [224, 63.485162019729614], [225, 54.26118803024292], [226, 57.0898220539093], [227, 51.80902695655823], [228, 57.74461913108826], [229, 48.944581031799316], [230, 47.17174816131592], [231, 58.09765386581421], [232, 61.96020698547363], [233, 0], [234, 55.82551598548889], [235, 47.922404050827026], [236, 45.29155492782593], [237, 0], [238, 40.89996790885925], [239, 56.35792803764343], [240, 181.13228011131287], [241, 48.63020992279053], [242, 59.57502198219299], [243, 43.96774506568909], [244, 45.127192974090576], [245, 174.02145504951477], [246, 170.4878580570221], [247, 59.58173179626465], [248, 62.766589879989624], [249, 58.28618597984314], [250, 62.28751587867737], [251, 56.15205907821655], [252, 58.3360059261322], [253, 62.1795289516449], [254, 60.5216269493103], [255, 58.195894956588745], [256, 61.111286878585815], [257, 176.06696200370789], [258, 119.83384990692139], [259, 167.60686492919922], [260, 118.7372179031372], [261, 120.51624393463135], [262, 180.66227412223816], [263, 115.21635293960571], [264, 170.19187688827515], [265, 164.79189205169678], [266, 175.50352692604065], [267, 176.2823190689087], [268, 171.84621000289917], [269, 177.2822241783142], [270, 179.31116604804993], [271, 173.47715187072754], [272, 171.17915797233582], [273, 174.33261013031006], [274, 176.2000560760498], [275, 0], [276, 0], [277, 0], [278, 61.134860038757324], [279, 0], [280, 0], [281, 62.87667989730835], [282, 59.6885039806366], [283, 181.43646812438965], [284, 57.67573308944702], [285, 181.20249915122986], [286, 119.3348388671875], [287, 108.80880093574524], [288, 107.59266591072083], [289, 104.59142684936523], [290, 108.91865706443787], [291, 107.60675001144409], [292, 107.2363760471344], [293, 107.33286786079407], [294, 115.65211701393127], [295, 105.98712706565857], [296, 121.55141115188599], [297, 0], [298, 180.72704696655273], [299, 118.14513087272644], [300, 116.46035695075989], [301, 120.86087799072266], [302, 52.667964935302734], [303, 49.799829959869385], [304, 52.36434483528137], [305, 52.10538911819458], [306, 56.96316719055176], [307, 0], [308, 122.09791302680969], [309, 116.08939099311829], [310, 57.900227069854736], [311, 64.50341010093689], [312, 112.3770580291748], [313, 118.55298900604248], [314, 0], [315, 0], [316, 0], [317, 0], [318, 185.3341588973999], [319, 0], [320, 183.43506002426147], [321, 122.94411396980286], [322, 120.44146609306335], [323, 0], [324, 177.40530014038086], [325, 174.96825790405273], [326, 59.169049978256226], [327, 55.11686396598816], [328, 58.15057396888733], [329, 56.473488092422485], [330, 56.07441997528076], [331, 62.36544990539551], [332, 114.92643404006958], [333, 59.817193031311035], [334, 118.29499411582947], [335, 56.04987096786499], [336, 55.35220813751221], [337, 155.28041219711304], [338, 58.885496854782104], [339, 55.004640102386475], [340, 49.64494204521179], [341, 53.4591851234436], [342, 121.69829201698303], [343, 158.8461148738861], [344, 158.1218237876892], [345, 157.95998907089233], [346, 153.73031306266785], [347, 60.30729103088379], [348, 154.22313785552979], [349, 63.81200098991394], [350, 56.538978099823], [351, 56.742841958999634], [352, 123.45162892341614], [353, 57.45207190513611], [354, 58.67028498649597], [355, 59.0745849609375], [356, 50.17066192626953], [357, 142.61377501487732], [358, 56.88694190979004], [359, 102.68951106071472], [360, 56.28173899650574], [361, 62.388420820236206], [362, 61.39931917190552], [363, 61.51506018638611], [364, 53.639551877975464], [365, 51.93920397758484], [366, 50.994017124176025], [367, 54.31917905807495], [368, 54.68440914154053], [369, 47.73365616798401], [370, 103.75991106033325], [371, 71.84267497062683], [372, 95.63368391990662], [373, 94.85753798484802], [374, 94.81206703186035], [375, 69.58856201171875], [376, 93.79266500473022], [377, 92.8318989276886], [378, 91.80214023590088], [379, 89.07997393608093], [380, 64.16824793815613], [381, 62.563130140304565], [382, 63.35578894615173], [383, 61.99199414253235]]], ["idle_duration", [[1, 0.0], [2, 0.0], [3, 0.0], [4, 0.0], [5, 0.0], [6, 0.0], [7, 0.0], [8, 0.0], [9, 0], [10, 0.0], [11, 0.0], [12, 0.0], [13, 0.0], [14, 0.0], [15, 0.0], [16, 0.0], [17, 0.0], [18, 0.0], [19, 0.0], [20, 0.0], [21, 0.0], [22, 0.0], [23, 0.0], [24, 0.0], [25, 0.0], [26, 0.0], [27, 0.0], [28, 0.0], [29, 0.0], [30, 0.0], [31, 0.0], [32, 0.0], [33, 0.0], [34, 0.0], [35, 0.0], [36, 0.0], [37, 0.0], [38, 0.0], [39, 0.0], [40, 0.0], [41, 0.0], [42, 0.0], [43, 0.0], [44, 0.0], [45, 0.0], [46, 0.0], [47, 0.0], [48, 0.0], [49, 0.0], [50, 0.0], [51, 0.0], [52, 0.0], [53, 0.0], [54, 0.0], [55, 0.0], [56, 0.0], [57, 0.0], [58, 0.0], [59, 0.0], [60, 0.0], [61, 0.0], [62, 0.0], [63, 0.0], [64, 0.0], [65, 0.0], [66, 0.0], [67, 0.0], [68, 0.0], [69, 0.0], [70, 0.0], [71, 0.0], [72, 0.0], [73, 0.0], [74, 0], [75, 0.0], [76, 0.0], [77, 0], [78, 0], [79, 0.0], [80, 0.0], [81, 0.0], [82, 0.0], [83, 0.0], [84, 0.0], [85, 0.0], [86, 0.0], [87, 0.0], [88, 0.0], [89, 0.0], [90, 0.0], [91, 0.0], [92, 0.0], [93, 0], [94, 0], [95, 0.0], [96, 0], [97, 0], [98, 0], [99, 0], [100, 0], [101, 0.0], [102, 0], [103, 0.0], [104, 0.0], [105, 0.0], [106, 0.0], [107, 0.0], [108, 0.0], [109, 0.0], [110, 0.0], [111, 0.0], [112, 0.0], [113, 0.0], [114, 0.0], [115, 0.0], [116, 0.0], [117, 0.0], [118, 0.0], [119, 0.0], [120, 0.0], [121, 0.0], [122, 0.0], [123, 0.0], [124, 0.0], [125, 0.0], [126, 0.0], [127, 0.0], [128, 0.0], [129, 0.0], [130, 0.0], [131, 0.0], [132, 0.0], [133, 0.0], [134, 0], [135, 0.0], [136, 0.0], [137, 0.0], [138, 0.0], [139, 0.0], [140, 0.0], [141, 0.0], [142, 0.0], [143, 0.0], [144, 0.0], [145, 0.0], [146, 0], [147, 0.0], [148, 0.0], [149, 0.0], [150, 0.0], [151, 0.0], [152, 0.0], [153, 0.0], [154, 0.0], [155, 0.0], [156, 0], [157, 0.0], [158, 0.0], [159, 0.0], [160, 0.0], [161, 0.0], [162, 0.0], [163, 0.0], [164, 0.0], [165, 0.0], [166, 0.0], [167, 0.0], [168, 0.0], [169, 0.0], [170, 0.0], [171, 0.0], [172, 0], [173, 0], [174, 0.0], [175, 0.0], [176, 0.0], [177, 0.0], [178, 0.0], [179, 0.0], [180, 0], [181, 0], [182, 0.0], [183, 0.0], [184, 0.0], [185, 0.0], [186, 0.0], [187, 0.0], [188, 0.0], [189, 0.0], [190, 0.0], [191, 0.0], [192, 0.0], [193, 0.0], [194, 0.0], [195, 0.0], [196, 0.0], [197, 0.0], [198, 0.0], [199, 0.0], [200, 0.0], [201, 0.0], [202, 0.0], [203, 0.0], [204, 0.0], [205, 0.0], [206, 0.0], [207, 0.0], [208, 0.0], [209, 0.0], [210, 0.0], [211, 0.0], [212, 0.0], [213, 0.0], [214, 0.0], [215, 0], [216, 0.0], [217, 0.0], [218, 0.0], [219, 0.0], [220, 0.0], [221, 0], [222, 0], [223, 0], [224, 0.0], [225, 0.0], [226, 0.0], [227, 0.0], [228, 0.0], [229, 0.0], [230, 0.0], [231, 0.0], [232, 0.0], [233, 0], [234, 0.0], [235, 0.0], [236, 0.0], [237, 0], [238, 0.0], [239, 0.0], [240, 0.0], [241, 0.0], [242, 0.0], [243, 0.0], [244, 0.0], [245, 0.0], [246, 0.0], [247, 0.0], [248, 0.0], [249, 0.0], [250, 0.0], [251, 0.0], [252, 0.0], [253, 0.0], [254, 0.0], [255, 0.0], [256, 0.0], [257, 0.0], [258, 0.0], [259, 0.0], [260, 0.0], [261, 0.0], [262, 0.0], [263, 0.0], [264, 0.0], [265, 0.0], [266, 0.0], [267, 0.0], [268, 0.0], [269, 0.0], [270, 0.0], [271, 0.0], [272, 0.0], [273, 0.0], [274, 0.0], [275, 0], [276, 0], [277, 0], [278, 0.0], [279, 0], [280, 0], [281, 0.0], [282, 0.0], [283, 0.0], [284, 0.0], [285, 0.0], [286, 0.0], [287, 0.0], [288, 0.0], [289, 0.0], [290, 0.0], [291, 0.0], [292, 0.0], [293, 0.0], [294, 0.0], [295, 0.0], [296, 0.0], [297, 0], [298, 0.0], [299, 0.0], [300, 0.0], [301, 0.0], [302, 0.0], [303, 0.0], [304, 0.0], [305, 0.0], [306, 0.0], [307, 0], [308, 0.0], [309, 0.0], [310, 0.0], [311, 0.0], [312, 0.0], [313, 0.0], [314, 0], [315, 0], [316, 0], [317, 0], [318, 0.0], [319, 0], [320, 0.0], [321, 0.0], [322, 0.0], [323, 0], [324, 0.0], [325, 0.0], [326, 0.0], [327, 0.0], [328, 0.0], [329, 0.0], [330, 0.0], [331, 0.0], [332, 0.0], [333, 0.0], [334, 0.0], [335, 0.0], [336, 0.0], [337, 0.0], [338, 0.0], [339, 0.0], [340, 0.0], [341, 0.0], [342, 0.0], [343, 0.0], [344, 0.0], [345, 0.0], [346, 0.0], [347, 0.0], [348, 0.0], [349, 0.0], [350, 0.0], [351, 0.0], [352, 0.0], [353, 0.0], [354, 0.0], [355, 0.0], [356, 0.0], [357, 0.0], [358, 0.0], [359, 0.0], [360, 0.0], [361, 0.0], [362, 0.0], [363, 0.0], [364, 0.0], [365, 0.0], [366, 0.0], [367, 0.0], [368, 0.0], [369, 0.0], [370, 0.0], [371, 0.0], [372, 0.0], [373, 0.0], [374, 0.0], [375, 0.0], [376, 0.0], [377, 0.0], [378, 0.0], [379, 0.0], [380, 0.0], [381, 0.0], [382, 0.0], [383, 0.0]]], ["failed_duration", [[1, 0], [2, 0], [3, 0], [4, 0], [5, 0], [6, 0], [7, 0], [8, 0], [9, 188.44215607643127], [10, 0], [11, 0], [12, 0], [13, 0], [14, 0], [15, 0], [16, 0], [17, 0], [18, 0], [19, 0], [20, 0], [21, 0], [22, 0], [23, 0], [24, 0], [25, 0], [26, 0], [27, 0], [28, 0], [29, 0], [30, 0], [31, 0], [32, 0], [33, 0], [34, 0], [35, 0], [36, 0], [37, 0], [38, 0], [39, 0], [40, 0], [41, 0], [42, 0], [43, 0], [44, 0], [45, 0], [46, 0], [47, 0], [48, 0], [49, 0], [50, 0], [51, 0], [52, 0], [53, 0], [54, 0], [55, 0], [56, 0], [57, 0], [58, 0], [59, 0], [60, 0], [61, 0], [62, 0], [63, 0], [64, 0], [65, 0], [66, 0], [67, 0], [68, 0], [69, 0], [70, 0], [71, 0], [72, 0], [73, 0], [74, 181.99480605125427], [75, 0], [76, 0], [77, 182.34309601783752], [78, 181.39461493492126], [79, 0], [80, 0], [81, 0], [82, 0], [83, 0], [84, 0], [85, 0], [86, 0], [87, 0], [88, 0], [89, 0], [90, 0], [91, 0], [92, 0], [93, 182.06681299209595], [94, 182.17708492279053], [95, 0], [96, 181.47117495536804], [97, 181.73186612129211], [98, 182.0534930229187], [99, 181.65933203697205], [100, 182.26823616027832], [101, 0], [102, 181.49362897872925], [103, 0], [104, 0], [105, 0], [106, 0], [107, 0], [108, 0], [109, 0], [110, 0], [111, 0], [112, 0], [113, 0], [114, 0], [115, 0], [116, 0], [117, 0], [118, 0], [119, 0], [120, 0], [121, 0], [122, 0], [123, 0], [124, 0], [125, 0], [126, 0], [127, 0], [128, 0], [129, 0], [130, 0], [131, 0], [132, 0], [133, 0], [134, 181.30540204048157], [135, 0], [136, 0], [137, 0], [138, 0], [139, 0], [140, 0], [141, 0], [142, 0], [143, 0], [144, 0], [145, 0], [146, 182.1734540462494], [147, 0], [148, 0], [149, 0], [150, 0], [151, 0], [152, 0], [153, 0], [154, 0], [155, 0], [156, 183.12354612350464], [157, 0], [158, 0], [159, 0], [160, 0], [161, 0], [162, 0], [163, 0], [164, 0], [165, 0], [166, 0], [167, 0], [168, 0], [169, 0], [170, 0], [171, 0], [172, 182.20984506607056], [173, 182.61673402786255], [174, 0], [175, 0], [176, 0], [177, 0], [178, 0], [179, 0], [180, 181.74566102027893], [181, 181.36676812171936], [182, 0], [183, 0], [184, 0], [185, 0], [186, 0], [187, 0], [188, 0], [189, 0], [190, 0], [191, 0], [192, 0], [193, 0], [194, 0], [195, 0], [196, 0], [197, 0], [198, 0], [199, 0], [200, 0], [201, 0], [202, 0], [203, 0], [204, 0], [205, 0], [206, 0], [207, 0], [208, 0], [209, 0], [210, 0], [211, 0], [212, 0], [213, 0], [214, 0], [215, 182.3432731628418], [216, 0], [217, 0], [218, 0], [219, 0], [220, 0], [221, 182.3809039592743], [222, 181.20822596549988], [223, 182.7409439086914], [224, 0], [225, 0], [226, 0], [227, 0], [228, 0], [229, 0], [230, 0], [231, 0], [232, 0], [233, 182.40540313720703], [234, 0], [235, 0], [236, 0], [237, 182.5257260799408], [238, 0], [239, 0], [240, 0], [241, 0], [242, 0], [243, 0], [244, 0], [245, 0], [246, 0], [247, 0], [248, 0], [249, 0], [250, 0], [251, 0], [252, 0], [253, 0], [254, 0], [255, 0], [256, 0], [257, 0], [258, 0], [259, 0], [260, 0], [261, 0], [262, 0], [263, 0], [264, 0], [265, 0], [266, 0], [267, 0], [268, 0], [269, 0], [270, 0], [271, 0], [272, 0], [273, 0], [274, 0], [275, 182.78576517105103], [276, 181.23774814605713], [277, 181.13712191581726], [278, 0], [279, 181.28737998008728], [280, 181.81717681884766], [281, 0], [282, 0], [283, 0], [284, 0], [285, 0], [286, 0], [287, 0], [288, 0], [289, 0], [290, 0], [291, 0], [292, 0], [293, 0], [294, 0], [295, 0], [296, 0], [297, 182.03254413604736], [298, 0], [299, 0], [300, 0], [301, 0], [302, 0], [303, 0], [304, 0], [305, 0], [306, 0], [307, 182.62817811965942], [308, 0], [309, 0], [310, 0], [311, 0], [312, 0], [313, 0], [314, 20.187274932861328], [315, 182.16647696495056], [316, 182.09734296798706], [317, 181.5797951221466], [318, 0], [319, 182.15360498428345], [320, 0], [321, 0], [322, 0], [323, 181.51778292655945], [324, 0], [325, 0], [326, 0], [327, 0], [328, 0], [329, 0], [330, 0], [331, 0], [332, 0], [333, 0], [334, 0], [335, 0], [336, 0], [337, 0], [338, 0], [339, 0], [340, 0], [341, 0], [342, 0], [343, 0], [344, 0], [345, 0], [346, 0], [347, 0], [348, 0], [349, 0], [350, 0], [351, 0], [352, 0], [353, 0], [354, 0], [355, 0], [356, 0], [357, 0], [358, 0], [359, 0], [360, 0], [361, 0], [362, 0], [363, 0], [364, 0], [365, 0], [366, 0], [367, 0], [368, 0], [369, 0], [370, 0], [371, 0], [372, 0], [373, 0], [374, 0], [375, 0], [376, 0], [377, 0], [378, 0], [379, 0], [380, 0], [381, 0], [382, 0], [383, 0]]]], "histogram": {"data": [[{"disabled": null, "values": [{"y": 43, "x": 16.89604482650757}, {"y": 7, "x": 25.761208724975585}, {"y": 5, "x": 34.6263726234436}, {"y": 12, "x": 43.49153652191162}, {"y": 48, "x": 52.35670042037964}, {"y": 98, "x": 61.22186431884765}, {"y": 33, "x": 70.08702821731566}, {"y": 1, "x": 78.95219211578369}, {"y": 0, "x": 87.8173560142517}, {"y": 8, "x": 96.68251991271973}, {"y": 6, "x": 105.54768381118774}, {"y": 24, "x": 114.41284770965575}, {"y": 44, "x": 123.27801160812378}, {"y": 1, "x": 132.14317550659177}, {"y": 0, "x": 141.00833940505981}, {"y": 1, "x": 149.87350330352783}, {"y": 5, "x": 158.73866720199584}, {"y": 9, "x": 167.60383110046385}, {"y": 21, "x": 176.4689949989319}, {"y": 17, "x": 185.3341588973999}], "key": "task", "view": "Square Root Choice"}], [{"disabled": null, "values": [{"y": 50, "x": 25.761208724975585}, {"y": 17, "x": 43.49153652191162}, {"y": 146, "x": 61.22186431884765}, {"y": 34, "x": 78.95219211578369}, {"y": 8, "x": 96.68251991271973}, {"y": 30, "x": 114.41284770965575}, {"y": 45, "x": 132.14317550659177}, {"y": 1, "x": 149.87350330352783}, {"y": 14, "x": 167.60383110046385}, {"y": 38, "x": 185.3341588973999}], "key": "task", "view": "Sturges Formula"}], [{"disabled": null, "values": [{"y": 45, "x": 19.851099459330243}, {"y": 10, "x": 31.67131799062093}, {"y": 12, "x": 43.49153652191162}, {"y": 81, "x": 55.31175505320231}, {"y": 93, "x": 67.13197358449301}, {"y": 6, "x": 78.95219211578369}, {"y": 1, "x": 90.77241064707438}, {"y": 8, "x": 102.59262917836507}, {"y": 29, "x": 114.41284770965576}, {"y": 45, "x": 126.23306624094646}, {"y": 0, "x": 138.05328477223713}, {"y": 1, "x": 149.87350330352783}, {"y": 7, "x": 161.69372183481852}, {"y": 18, "x": 173.5139403661092}, {"y": 27, "x": 185.3341588973999}], "key": "task", "view": "Rice Rule"}]], "views": [{"id": 0, "name": "Square Root Choice"}, {"id": 1, "name": "Sturges Formula"}, {"id": 2, "name": "Rice Rule"}]}}, "additive_output": [], "table": {"rows": [["nova.list_servers", 0.112, 0.225, 0.368, 0.463, 0.764, 0.248, "100.0%", 345], ["nova.boot_server", 7.919, 60.341, 169.887, 175.99, 185.096, 84.834, "90.1%", 383], ["total", 8.031, 60.544, 170.369, 176.266, 185.334, 85.083, "90.1%", 383]], "cols": ["Action", "Min (sec)", "Median (sec)", "90%ile (sec)", "95%ile (sec)", "Max (sec)", "Avg (sec)", "Success", "Count"]}, "full_duration": 866.5648398399353, "config": "{\n  \"NovaServers.boot_and_list_server\": [\n    {\n      \"runner\": {\n        \"type\": \"constant\", \n        \"concurrency\": 50, \n        \"times\": 2000\n      }, \n      \"args\": {\n        \"detailed\": true, \n        \"flavor\": {\n          \"name\": \"m1.tiny\"\n        }, \n        \"image\": {\n          \"name\": \"cirros.uec\"\n        }\n      }, \n      \"sla\": {\n        \"failure_rate\": {\n          \"max\": 0\n        }\n      }, \n      \"context\": {\n        \"users\": {\n          \"users_per_tenant\": 2, \n          \"project_domain\": \"default\", \n          \"user_choice_method\": \"random\", \n          \"user_domain\": \"default\", \n          \"tenants\": 20, \n          \"resource_management_workers\": 30\n        }, \n        \"quotas\": {\n          \"nova\": {\n            \"ram\": -1, \n            \"floating_ips\": -1, \n            \"security_group_rules\": -1, \n            \"instances\": -1, \n            \"cores\": -1, \n            \"security_groups\": -1\n          }, \n          \"neutron\": {\n            \"subnet\": -1, \n            \"network\": -1, \n            \"port\": -1\n          }\n        }\n      }\n    }\n  ]\n}", "sla": [{"criterion": "failure_rate", "detail": "Failure rate criteria 0.00% <= 9.92% <= 0.00% - Failed", "success": false}, {"criterion": "aborted_manually", "detail": "Task was aborted due to abort signal.", "success": false}], "complete_output": [[], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], []], "cls": "NovaServers"}];
+
+      $scope.location = {
+        /* #/path/hash/sub/div */
+        normalize: function(str) {
+          /* Remove unwanted characters from string */
+          if (typeof str !== "string") { return "" }
+          return str.replace(/[^\w\-\.]/g, "")
+        },
+        uri: function(obj) {
+          /* Getter/Setter */
+          if (! obj) {
+            var uri = {path: "", hash: "", sub: "", div: ""};
+            var arr = ["div", "sub", "hash", "path"];
+            angular.forEach($location.url().split("/"), function(value){
+              var v = $scope.location.normalize(value);
+              if (v) { var k = arr.pop(); if (k) { this[k] = v }}
+            }, uri);
+            return uri
+          }
+          var arr = [obj.path, obj.hash, obj.sub, obj.div], res = [];
+          for (var i in arr) { if (! arr[i]) { break }; res.push(arr[i]) }
+          return $location.url("/" + res.join("/"))
+        },
+        path: function(path, hash) {
+          /* Getter/Setter */
+          if (path === "") { return this.uri({}) }
+          path = this.normalize(path);
+          var uri = this.uri();
+          if (! path) { return uri.path }
+          uri.path = path;
+          var _hash = this.normalize(hash);
+          if (_hash || hash === "") { uri.hash = _hash }
+          return this.uri(uri)
+        },
+        hash: function(hash) {
+          /* Getter/Setter */
+          if (hash) { this.uri({path:this.uri().path, hash:hash}) }
+          return this.uri().hash
+        }
+      }
+
+      /* Dispatch */
+
+      $scope.route = function(uri) {
+        if (! $scope.scenarios_map) { return }
+
+        // Expand menu if there is only one menu group
+        if ($scope.nav.length === 1) {
+          $scope.nav_idx = $scope.nav[0].idx;
+        }
+
+        if (uri.path in $scope.scenarios_map) {
+          $scope.view = {is_scenario:true};
+          $scope.scenario = $scope.scenarios_map[uri.path];
+          $scope.nav_idx = $scope.nav_map[uri.path];
+          if ($scope.scenario.iterations.histogram.views.length) {
+            $scope.mainHistogram = $scope.scenario.iterations.histogram.views[0]
+          }
+          if ($scope.scenario.atomic.histogram.views.length) {
+            $scope.atomicHistogram = $scope.scenario.atomic.histogram.views[0]
+          }
+          $scope.outputIteration = 0;
+          $scope.showTab(uri);
+        } else {
+          $scope.scenario = null;
+          if (uri.path === "source") {
+            $scope.view = {is_source:true}
+          } else {
+            $scope.view = {is_main:true}
+          }
+        }
+      }
+
+      $scope.$on("$locationChangeSuccess", function (event, newUrl, oldUrl) {
+        $scope.route($scope.location.uri())
+      });
+
+      $scope.showNav = function(nav_idx) { $scope.nav_idx = nav_idx }
+
+      /* Tabs */
+
+      $scope.tabs = [
+        {
+          id: "overview",
+          name: "Overview",
+          visible: function(){ return !! $scope.scenario.iterations.pie.length }
+        },{
+          id: "details",
+          name: "Details",
+          visible: function(){ return !! $scope.scenario.atomic.pie.length }
+        },{
+          id: "output",
+          name: "Scenario Data",
+          visible: function(){ return $scope.scenario.output.length }
+        },{
+          id: "failures",
+          name: "Failures",
+          visible: function(){ return !! $scope.scenario.errors.length }
+        },{
+          id: "task",
+          name: "Input task",
+          visible: function(){ return !! $scope.scenario.config }
+        }
+      ];
+      $scope.tabs_map = {};
+      angular.forEach($scope.tabs,
+                      function(tab){ this[tab.id] = tab }, $scope.tabs_map);
+
+      $scope.showTab = function(uri) {
+        $scope.tab = uri.hash in $scope.tabs_map ? uri.hash : "overview";
+        if (! $scope.scenario.output) {
+          var has_additive = !! $scope.scenario.additive_output.length;
+          var has_complete = !! ($scope.scenario.complete_output.length
+                                 && $scope.scenario.complete_output[0].length);
+          $scope.scenario.output = {
+            has_additive: has_additive,
+            has_complete: has_complete,
+            length: has_additive + has_complete,
+            active: has_additive ? "additive" : (has_complete ? "complete" : "")
+          }
+        }
+        if (uri.hash === "output") {
+          if (uri.sub && $scope.scenario.output["has_" + uri.sub]) {
+            $scope.scenario.output.active = uri.sub
+          }
+        }
+      }
+
+      for (var i in $scope.tabs) {
+        if ($scope.tabs[i].id === $scope.location.hash()) {
+          $scope.tab = $scope.tabs[i].id
+        }
+        $scope.tabs[i].isVisible = function() {
+          if ($scope.scenario) {
+            if (this.visible()) { return true }
+            /* If tab should be hidden but is selected - show another one */
+            if (this.id === $scope.location.hash()) {
+              for (var i in $scope.tabs) {
+                var tab = $scope.tabs[i];
+                if (tab.id != this.id && tab.visible()) {
+                  $scope.tab = tab.id;
+                  return false
+                }
+              }
+            }
+          }
+          return false
+        }
+      }
+
+      /* Other helpers */
+
+      $scope.showError = function(message) {
+          return (function (e) {
+            e.style.display = "block";
+            e.textContent = message
+          })(document.getElementById("page-error"))
+      }
+
+      $scope.compact_atomics = function() {
+        return ($scope.scenario && $scope.scenario.atomic.iter.length < 9)
+      }
+
+      /* Initialization */
+
+      angular.element(document).ready(function(){
+        if (! $scope.scenarios.length) {
+          return $scope.showError("No data...")
+        }
+
+        /* Compose data mapping */
+
+        $scope.nav = [];
+        $scope.nav_map = {};
+        $scope.scenarios_map = {};
+        var met = [], itr = 0, cls_idx = 0;
+        var prev_cls, prev_met;
+
+        for (var idx in $scope.scenarios) {
+          var sc = $scope.scenarios[idx];
+          if (! prev_cls) {
+            prev_cls = sc.cls
+          }
+          else if (prev_cls !== sc.cls) {
+            $scope.nav.push({cls:prev_cls, met:met, idx:cls_idx});
+            prev_cls = sc.cls;
+            met = [];
+            itr = 1;
+            cls_idx += 1
+          }
+
+          if (prev_met !== sc.met) { itr = 1 };
+          sc.ref = $scope.location.normalize(sc.cls+"."+sc.met+(itr > 1 ? "-"+itr : ""));
+          $scope.scenarios_map[sc.ref] = sc;
+          $scope.nav_map[sc.ref] = cls_idx;
+          met.push({name:sc.name, itr:itr, idx:idx, ref:sc.ref});
+          prev_met = sc.met;
+          itr += 1;
+        }
+
+        if (met.length) {
+          $scope.nav.push({cls:prev_cls, met:met, idx:cls_idx})
+        }
+
+        /* Start */
+
+        var uri = $scope.location.uri();
+        uri.path = $scope.location.path();
+        $scope.route(uri);
+        $scope.$digest()
+      })
+    };
+
+    if (typeof angular === "object") {
+      angular.module("App", [])
+        .controller("Controller", ["$scope", "$location", controllerFunction])
+        .directive("widget", widgetDirective)
+    }
+
+
+</script>
+  <style>
+    body { margin:0; padding:0 0 50px; font-size:14px; font-family:Helvetica,Arial,sans-serif }
+    a, a:active, a:focus, a:visited { text-decoration:none; outline:none }
+    p { margin:0; padding:5px 0 }
+    p.thesis { padding:10px 0 }
+    h1 { color:#666; margin:0 0 20px; font-size:30px; font-weight:normal }
+    h2, .h2 { color:#666; margin:24px 0 6px; font-size:25px; font-weight:normal }
+    h3, .h3 { color:#777; margin:12px 0 4px; font-size:18px; font-weight:normal }
+    table { border-collapse:collapse; border-spacing:0; width:100%; font-size:12px; margin:0 0 10px }
+    table th { text-align:left; padding:8px; color:#000; border:2px solid #ddd; border-width:0 0 2px 0 }
+    table th.sortable { cursor:pointer }
+    table td { text-align:left; border-top:1px solid #ddd; padding:8px; color:#333 }
+    table.compact td { padding:4px 8px }
+    table.striped tr:nth-child(odd) td { background:#f9f9f9 }
+    table.linked tbody tr:hover { background:#f9f9f9; cursor:pointer }
+    .rich, .rich td { font-weight:bold }
+    .code { padding:10px; font-size:13px; color:#333; background:#f6f6f6; border:1px solid #e5e5e5; border-radius:4px }
+
+    .header { text-align:left; background:#333; font-size:18px; padding:13px 0; margin-bottom:20px; color:#fff; background-image:linear-gradient(to bottom, #444 0px, #222 100%) }
+    .header a, .header a:visited, .header a:focus { color:#999 }
+
+    .notify-error { padding:5px 10px; background:#fee; color:red }
+    .status-skip, .status-skip td { color:grey }
+    .status-pass, .status-pass td { color:green }
+    .status-fail, .status-fail td { color:red }
+    .capitalize { text-transform:capitalize }
+    
+    .aside { margin:0 20px 0 0; display:block; width:255px; float:left }
+    .aside > div { margin-bottom: 15px }
+    .aside > div div:first-child { border-top-left-radius:4px; border-top-right-radius:4px }
+    .aside > div div:last-child { border-bottom-left-radius:4px; border-bottom-right-radius:4px }
+    .navcls { color:#678; background:#eee; border:1px solid #ddd; margin-bottom:-1px; display:block; padding:8px 9px; font-weight:bold; text-align:left; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; cursor:pointer }
+    .navcls.expanded { color:#469 }
+    .navcls.active { background:#428bca; background-image:linear-gradient(to bottom, #428bca 0px, #3278b3 100%); border-color:#3278b3; color:#fff }
+    .navmet { color:#555; background:#fff; border:1px solid #ddd; font-size:12px; display:block; margin-bottom:-1px; padding:8px 10px; text-align:left; text-overflow:ellipsis; white-space:nowrap; overflow:hidden; cursor:pointer }
+    .navmet:hover { background:#f8f8f8 }
+    .navmet.active, .navmet.active:hover { background:#428bca; background-image:linear-gradient(to bottom, #428bca 0px, #3278b3 100%); border-color:#3278b3; color:#fff }
+
+    .tabs { list-style:outside none none; margin:0 0 5px; padding:0; border-bottom:1px solid #ddd }
+    .tabs:after { clear:both }
+    .tabs li { float:left; margin-bottom:-1px; display:block; position:relative }
+    .tabs li div { border:1px solid transparent; border-radius:4px 4px 0 0; line-height:20px; margin-right:2px; padding:10px 15px; color:#428bca }
+    .tabs li div:hover { border-color:#eee #eee #ddd; background:#eee; cursor:pointer; }
+    .tabs li.active div { background:#fff; border-color:#ddd #ddd transparent; border-style:solid; border-width:1px; color:#555; cursor:default }
+    .failure-mesg { color:#900 }
+    .failure-trace { color:#333; white-space:pre; overflow:auto }
+
+    .link { color:#428BCA; padding:5px 15px 5px 5px; text-decoration:underline; cursor:pointer }
+    .link.active { color:#333; text-decoration:none }
+
+    .chart { padding:0; margin:0; width:890px }
+    .chart svg { height:300px; padding:0; margin:0; overflow:visible; float:right }
+    .chart.lower svg { height:180px }
+    .chart-label-y { font-size:12px; position:relative; top:5px; padding:0; margin:0 }
+
+    .expandable { cursor:pointer }
+    .clearfix { clear:both }
+    .sortable > .arrow { display:inline-block; width:12px; height:inherit; color:#c90 }
+    .content-main { margin:0 5px; display:block; float:left }
+
+    .content-wrap {  margin:0 auto; padding:0 5px </%block>}
+    
+    @media only screen and (min-width: 320px)  { .content-wrap { width:900px  } .content-main { width:600px } }
+    @media only screen and (min-width: 900px)  { .content-wrap { width:880px  } .content-main { width:590px } }
+    @media only screen and (min-width: 1000px) { .content-wrap { width:980px  } .content-main { width:690px } }
+    @media only screen and (min-width: 1100px) { .content-wrap { width:1080px } .content-main { width:790px } }
+    @media only screen and (min-width: 1200px) { .content-wrap { width:1180px } .content-main { width:890px } }
+
+  </style>
+</head>
+<body ng-controller="Controller">
+
+  <div class="header">
+    <div class="content-wrap">
+      <a href="https://github.com/openstack/rally">Rally</a>&nbsp;
+      <span>task results</span>
+    </div>
+  </div>
+
+  <div class="content-wrap">
+    
+
+    <p id="page-error" class="notify-error" style="display:none"></p>
+
+    <div id="content-nav" class="aside" ng-show="scenarios.length" ng-cloack>
+      <div>
+        <div class="navcls"
+             ng-class="{active:view.is_main}"
+             ng-click="location.path('')">Task overview</div>
+        <div class="navcls"
+             ng-class="{active:view.is_source}"
+             ng-click="location.path('source', '')">Input file</div>
+      </div>
+      <div>
+        <div class="navcls" title="{{n.cls}}"
+             ng-repeat-start="n in nav track by $index"
+             ng-click="showNav(n.idx)"
+             ng-class="{expanded:n.idx==nav_idx}">
+                <span ng-hide="n.idx==nav_idx">&#9658;</span>
+                <span ng-show="n.idx==nav_idx">&#9660;</span>
+                {{n.cls}}</div>
+        <div class="navmet" title="{{m.name}}"
+             ng-show="n.idx==nav_idx"
+             ng-class="{active:m.ref==scenario.ref}"
+             ng-click="location.path(m.ref)"
+             ng-repeat="m in n.met track by $index"
+             ng-repeat-end>{{m.name}}</div>
+      </div>
+    </div>
+
+    <div id="content-main" class="content-main" ng-show="scenarios.length" ng-cloak>
+
+      <div ng-show="view.is_main">
+        <h1>Task overview</h1>
+        <table class="linked compact"
+               ng-init="ov_srt='ref'; ov_dir=false">
+          <thead>
+            <tr>
+              <th class="sortable"
+                  title="Scenario name, with optional suffix of call number"
+                  ng-click="ov_srt='ref'; ov_dir=!ov_dir">
+                Scenario
+                <span class="arrow">
+                  <b ng-show="ov_srt=='ref' && !ov_dir">&#x25b4;</b>
+                  <b ng-show="ov_srt=='ref' && ov_dir">&#x25be;</b>
+                </span>
+              <th class="sortable"
+                  title="How long the scenario run, without context duration"
+                  ng-click="ov_srt='load_duration'; ov_dir=!ov_dir">
+                Load duration (s)
+                <span class="arrow">
+                  <b ng-show="ov_srt=='load_duration' && !ov_dir">&#x25b4;</b>
+                  <b ng-show="ov_srt=='load_duration' && ov_dir">&#x25be;</b>
+                </span>
+              <th class="sortable"
+                  title="Scenario duration plus context duration"
+                  ng-click="ov_srt='full_duration'; ov_dir=!ov_dir">
+                Full duration (s)
+                <span class="arrow">
+                  <b ng-show="ov_srt=='full_duration' && !ov_dir">&#x25b4;</b>
+                  <b ng-show="ov_srt=='full_duration' && ov_dir">&#x25be;</b>
+                </span>
+              <th class="sortable" title="Number of iterations"
+                  ng-click="ov_srt='iterations_count'; ov_dir=!ov_dir">
+                Iterations
+                <span class="arrow">
+                  <b ng-show="ov_srt=='iterations_count' && !ov_dir">&#x25b4;</b>
+                  <b ng-show="ov_srt=='iterations_count' && ov_dir">&#x25be;</b>
+                </span>
+              <th class="sortable" title="Scenario runner type"
+                  ng-click="ov_srt='runner'; ov_dir=!ov_dir">
+                Runner
+                <span class="arrow">
+                  <b ng-show="ov_srt=='runner' && !ov_dir">&#x25b4;</b>
+                  <b ng-show="ov_srt=='runner' && ov_dir">&#x25be;</b>
+                </span>
+              <th class="sortable" title="Number of errors occurred"
+                  ng-click="ov_srt='errors.length'; ov_dir=!ov_dir">
+                Errors
+                <span class="arrow">
+                  <b ng-show="ov_srt=='errors.length' && !ov_dir">&#x25b4;</b>
+                  <b ng-show="ov_srt=='errors.length' && ov_dir">&#x25be;</b>
+                </span>
+              <th class="sortable" title="Whether SLA check is successful"
+                  ng-click="ov_srt='sla_success'; ov_dir=!ov_dir">
+                Success (SLA)
+                <span class="arrow">
+                  <b ng-show="ov_srt=='sla_success' && !ov_dir">&#x25b4;</b>
+                  <b ng-show="ov_srt=='sla_success' && ov_dir">&#x25be;</b>
+                </span>
+            <tr>
+          </thead>
+          <tbody>
+            <tr ng-repeat="sc in scenarios | orderBy:ov_srt:ov_dir"
+                ng-click="location.path(sc.ref)">
+              <td>{{sc.ref}}
+              <td>{{sc.load_duration | number:3}}
+              <td>{{sc.full_duration | number:3}}
+              <td>{{sc.iterations_count}}
+              <td>{{sc.runner}}
+              <td>{{sc.errors.length}}
+              <td>
+                <span ng-show="sc.sla_success" class="status-pass">&#x2714;</span>
+                <span ng-hide="sc.sla_success" class="status-fail">&#x2716;</span>
+            <tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div ng-show="view.is_source">
+        <h1>Input file</h1>
+        <pre class="code">{{source}}</pre>
+      </div>
+
+      <div ng-show="view.is_scenario">
+        <h1>{{scenario.cls}}.<wbr>{{scenario.name}} ({{scenario.full_duration | number:3}}s)</h1>
+        <ul class="tabs">
+          <li ng-repeat="t in tabs"
+              ng-show="t.isVisible()"
+              ng-class="{active:t.id == tab}"
+              ng-click="location.hash(t.id)">
+            <div>{{t.name}}</div>
+          </li>
+          <div class="clearfix"></div>
+        </ul>
+        <div ng-include="tab"></div>
+
+        <script type="text/ng-template" id="overview">
+          <p class="thesis">
+            Load duration: <b>{{scenario.load_duration | number:3}} s</b> &nbsp;
+            Full duration: <b>{{scenario.full_duration | number:3}} s</b> &nbsp;
+            Iterations: <b>{{scenario.iterations_count}}</b> &nbsp;
+            Failures: <b>{{scenario.errors.length}}</b>
+          </p>
+
+          <div ng-show="scenario.sla.length">
+            <h2>Service-level agreement</h2>
+            <table class="striped">
+              <thead>
+                <tr>
+                  <th>Criterion
+                  <th>Detail
+                  <th>Success
+                <tr>
+              </thead>
+              <tbody>
+                <tr class="rich"
+                    ng-repeat="row in scenario.sla track by $index"
+                    ng-class="{'status-fail':!row.success, 'status-pass':row.success}">
+                  <td>{{row.criterion}}
+                  <td>{{row.detail}}
+                  <td class="capitalize">{{row.success}}
+                <tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div widget="Table"
+               data="scenario.table"
+               lastrow-class="rich"
+               title="Total durations">
+          </div>
+
+          <div widget="StackedArea"
+               data="scenario.iterations.iter"
+               name-x="Iteration sequence number"
+               controls="true"
+               guide="true">
+          </div>
+
+          <div widget="StackedArea"
+               data="scenario.load_profile"
+               title="Load Profile"
+               title-class="h3"
+               name-x="Timeline (seconds)"
+               format-y="d"
+               format-x=",.2f"
+               class="lower">
+          </div>
+
+          <div widget="Pie"
+               data="scenario.iterations.pie"
+               title="Distribution"
+               title-class="h3"
+               style="float:left; width:40%; margin-top:15px">
+          </div>
+
+          <div widget="Histogram"
+               ng-if="scenario.iterations.histogram.data.length"
+               data="scenario.iterations.histogram.data[mainHistogram.id]"
+               style="float:left; width:59%; margin-top:15px; position:relative; top:40px">
+          </div>
+
+          <select ng-model="mainHistogram"
+                  ng-show="scenario.iterations.histogram.data.length"
+                  ng-options="i.name for i in scenario.iterations.histogram.views track by i.id"
+                  style="float:right; margin:45px 35px 0">
+          </select>
+
+          <div class="clearfix"></div>
+
+        </script>
+
+        <script type="text/ng-template" id="details">
+
+          <div widget="StackedArea"
+               data="scenario.atomic.iter"
+               title="Atomic Action Durations"
+               name-x="Iteration sequence number"
+               controls="true"
+               guide="true">
+          </div>
+
+          <div widget="Pie"
+               data="scenario.atomic.pie"
+               title="Distribution"
+               title-class="h3"
+               style="float:left; margin-top:15px"
+               ng-style="compact_atomics() ? {width:'40%'} : {}">
+          </div>
+
+          <div widget="Histogram" data="scenario.atomic.histogram.data[atomicHistogram.id]"
+               ng-if="scenario.atomic.histogram.data.length"
+               style="float:left; position:relative; top:40px"
+               ng-style="compact_atomics() ? {width:'59%', 'margin-top':'15px'} : {}">
+          </div>
+
+          <select ng-show="scenario.atomic.histogram.data.length"
+                  ng-model="atomicHistogram"
+                  ng-options="i.name for i in scenario.atomic.histogram.views track by i.id"
+                  style="float:right; margin:45px 35px 0">
+          </select>
+
+          <div class="clearfix"></div>
+
+        </script>
+
+        <script type="text/ng-template" id="output">
+
+          <div style="padding:10px 0 0">
+            <span class="link"
+                  ng-click="location.hash('output/additive')"
+                  ng-class="{active:scenario.output.active === 'additive'}"
+                  ng-if="scenario.output.has_additive">Aggregated</span>
+            <span class="link"
+                  ng-click="location.hash('output/complete')"
+                  ng-class="{active:scenario.output.active === 'complete'}"
+                  ng-if="scenario.output.has_complete">Per iteration</span>
+          </div>
+
+          <div ng-repeat="chart in scenario.additive_output"
+               ng-if="scenario.output.active === 'additive'">
+            <div widget="{{chart.widget}}"
+                 title="{{chart.title}}"
+                 description="{{chart.description}}"
+                 name-x="{{chart.axis_label}}"
+                 name-y="{{chart.label}}"
+                 data="chart.data">
+            </div>
+          </div>
+
+          <div ng-if="scenario.output.active === 'complete'" style="padding:10px 0 0">
+            <select ng-model="outputIteration">
+              <option ng-repeat="i in scenario.complete_output track by $index"
+                      value="{{$index}}">
+                Iteration {{$index}}
+            </select>
+
+            <div ng-repeat="chart in scenario.complete_output[outputIteration]">
+              <div widget="{{chart.widget}}"
+                   title="{{chart.title}}"
+                   description="{{chart.description}}"
+                   name-x="{{chart.axis_label}}"
+                   name-y="{{chart.label}}"
+                   data="chart.data">
+              </div>
+            </div>
+          </div>
+        </script>
+
+        <script type="text/ng-template" id="failures">
+          <h2>Task failures (<ng-pluralize
+            count="scenario.errors.length"
+            when="{'1': '1 iteration', 'other': '{} iterations'}"></ng-pluralize> failed)
+          </h2>
+          <table class="striped">
+            <thead>
+              <tr>
+                <th>
+                <th>Iteration
+                <th>Exception type
+                <th>Exception message
+              </tr>
+            </thead>
+            <tbody>
+              <tr class="expandable"
+                  ng-repeat-start="i in scenario.errors track by $index"
+                  ng-click="i.expanded = ! i.expanded">
+                <td>
+                  <span ng-hide="i.expanded">&#9658;</span>
+                  <span ng-show="i.expanded">&#9660;</span>
+                <td>{{i.iteration}}
+                <td>{{i.type}}
+                <td class="failure-mesg">{{i.message}}
+              </tr>
+              <tr ng-show="i.expanded" ng-repeat-end>
+                <td colspan="4" class="failure-trace">{{i.traceback}}
+              </tr>
+            </tbody>
+          </table>
+        </script>
+
+        <script type="text/ng-template" id="task">
+          <h2>Subtask Configuration</h2>
+          <pre class="code">{{scenario.config}}</pre>
+        </script>
+      </div>
+
+    </div>
+    <div class="clearfix"></div>
+
+
+  </div>
+
+  <script type="text/javascript">
+    if (! window.angular) {(function(f){
+      f(document.getElementById("content-nav"), "none");
+      f(document.getElementById("content-main"), "none");
+      f(document.getElementById("page-error"), "block").textContent = "Failed to load AngularJS framework"
+    })(function(e, s){e.style.display = s; return e})}
+</script>
+</body>
+</html>
