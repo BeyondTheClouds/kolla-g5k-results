@@ -126,7 +126,10 @@ Vagrant.configure(2) do |config|
       }
 
       # ports to expose (at least ssh has to be forwarded)
-      g5k.ports = ['2222-:22','3000-:3000', '8000-:80', '5601-:5601']
+      g5k.net = {
+          "type" => "nat",
+          "ports" => ['2222-:22','3000-:3000', '8000-:80', '5601-:5601']
+      }
       g5k.oar = "virtual != 'none' and core >= 16"
     end
 
