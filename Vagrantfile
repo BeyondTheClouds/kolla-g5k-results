@@ -6,7 +6,7 @@
 # This Vagrantfile makes use of the plugin vagrant-g5k
 # https://github.com/msimonin/vagrant-g5k
 #
-# version 0.0.13
+# version 0.9.2
 
 # The list of experimentation. There will be one VM per
 # experimentation. You can access it thought eg, `vagrant ssh idle`.
@@ -118,17 +118,17 @@ Vagrant.configure(2) do |config|
 
       # it could be backed by the ceph
       g5k.image = {
-        "pool"     => "discovery_kolla_registry",
-        "rbd"      => "bases/alpine_docker",
-        "id"       => "discovery",
-        "conf"     => "/home/discovery/.ceph/config",
-        "backing"  => "copy"
+        :pool     => "discovery_kolla_registry",
+        :rbd     => "bases/alpine_docker",
+        :id       => "discovery",
+        :conf     => "/home/discovery/.ceph/config",
+        :backing  => "copy"
       }
 
       # ports to expose (at least ssh has to be forwarded)
       g5k.net = {
-          "type" => "nat",
-          "ports" => ['2222-:22','3000-:3000', '8000-:80', '5601-:5601']
+          :type => "nat",
+          :ports => ['2222-:22','3000-:3000', '8000-:80', '5601-:5601']
       }
       g5k.oar = "virtual != 'none' and core >= 16"
     end
