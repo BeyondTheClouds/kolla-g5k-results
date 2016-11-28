@@ -85,7 +85,9 @@ XPS =[
     :confs => [
                 "dense_l3_east_west_dvr_cpt4",
                 "dense_l3_east_west_nodvr_4cpt",
-                "dense_l3_east_west_dvr_cpt1"
+                "dense_l3_east_west_dvr_cpt1",
+                "dense_l3_east_west_dvr_cpt1_interfaces",
+                "dense_l3_east_west_nodvr_cpt1_interfaces"
               ]
   },
   {
