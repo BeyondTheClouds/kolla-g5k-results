@@ -38,7 +38,7 @@
     }
   ],
   "id": null,
-  "title": "New dashboard",
+  "title": "dense_l3_east_west",
   "tags": [],
   "style": "dark",
   "timezone": "browser",
@@ -1266,7 +1266,7 @@
   },
   "refresh": false,
   "schemaVersion": 12,
-  "version": 1,
+  "version": 2,
   "links": [],
   "gnetId": null
 }
