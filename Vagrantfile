@@ -78,6 +78,23 @@ XPS =[
                 "load-clust-rabbit-cpt20-nfk50-sched8-on-1-tuned-handshake-timeout-rally-20000",
                 "load-clust-rabbit-cpt20-nfk50-sched8-on-1-tuned-handshake-timeout-rally-20000-2"
               ]
+  },
+  {
+    # load test with a clustered rabbitmq third set of iteration
+    :name  => "dense_l3_east_west",
+    :confs => [
+                "dense_l3_east_west_dvr_cpt4",
+                "dense_l3_east_west_nodvr_4cpt",
+                "dense_l3_east_west_dvr_cpt1"
+              ]
+  },
+  {
+    # load test with a clustered rabbitmq third set of iteration
+    :name  => "test_shaker",
+    :confs => [
+                "test_shaker",
+                "test_shaker2"
+              ]
   }
 
  # Add another experimentation
