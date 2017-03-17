@@ -54,7 +54,7 @@
   "hideControls": false,
   "sharedCrosshair": true,
   "rows": [
-    {
+     {
       "collapse": false,
       "editable": true,
       "height": "200px",
@@ -4576,29 +4576,36 @@
         "enable": true,
         "iconColor": "rgba(255, 96, 96, 1)",
         "name": "playbooks",
-        "query": "select text from events where $timeFilter and type = 'playbook-start'"
+        "query": "select title,tags,text from events where $timeFilter and type = 'playbook'",
+        "titleColumn": "title",
+        "tagsColumn": "tags",
+        "textColumn": "text"
       },
       {
         "datasource": "${DS_INFLUX-EVENTS}",
-        "enable": false,
+        "enable": true,
         "iconColor": "rgba(96, 255, 96, 1)",
         "name": "plays",
-        "query": "select text from events where $timeFilter and type = 'play-start'"
+        "query": "select title,tags,text from events where $timeFilter and type = 'play'",
+        "titleColumn": "title",
+        "tagsColumn": "tags",
+        "textColumn": "text"
       },
       {
         "datasource": "${DS_INFLUX-EVENTS}",
-        "enable": false,
+        "enable": true,
         "iconColor": "rgba(96, 96, 255, 1)",
         "name": "tasks",
-        "query": "select text from events where $timeFilter and type = 'task-start'",
-        "titleColumn": ""
+        "query": "select title,tags,text from events where $timeFilter and type = 'task'",
+        "titleColumn": "title",
+        "tagsColumn": "tags",
+        "textColumn": "text"
       }
     ]
   },
   "refresh": false,
   "schemaVersion": 12,
-  "version": 1,
+  "version": 0,
   "links": [],
   "gnetId": null
 }
-
